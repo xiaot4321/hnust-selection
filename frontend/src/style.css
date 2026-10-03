@@ -1,0 +1,734 @@
+/* 全局字体、文字渲染和默认页面底色；下面的通用选择器由认证页继承。 */
+:root {
+  font-family: 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  color: #182437;
+  background: #f3f6fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(93, 139, 217, 0.12), transparent 30rem),
+    #f3f6fb;
+}
+
+.page-shell {
+  /* 通用内容容器样式，限制正文宽度并在大屏上居中。 */
+  width: min(100% - 40px, 1040px);
+  margin: 0 auto;
+  padding: 88px 0 36px;
+}
+
+.hero-card {
+  /* 通用主卡片外观：边框、圆角和柔和阴影用于凸显主要内容。 */
+  position: relative;
+  overflow: hidden;
+  padding: clamp(32px, 6vw, 64px);
+  border: 1px solid #e4eaf3;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 70px rgba(31, 56, 91, 0.08);
+}
+
+.hero-card::after {
+  position: absolute;
+  top: -112px;
+  right: -72px;
+  width: 330px;
+  height: 330px;
+  border: 1px solid rgba(48, 100, 175, 0.1);
+  border-radius: 50%;
+  box-shadow: 0 0 0 34px rgba(48, 100, 175, 0.025), 0 0 0 70px rgba(48, 100, 175, 0.02);
+  content: '';
+  pointer-events: none;
+}
+
+.eyebrow {
+  color: #3a68a6;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+h1 {
+  margin: 18px 0 14px;
+  color: #15243a;
+  font-size: clamp(34px, 5vw, 54px);
+  letter-spacing: 0.01em;
+  line-height: 1.16;
+}
+
+.intro {
+  max-width: 650px;
+  margin: 0;
+  color: #637187;
+  font-size: 16px;
+  line-height: 1.9;
+}
+
+.status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 30px;
+  padding: 11px 15px;
+  border: 1px solid #d8eadf;
+  border-radius: 999px;
+  background: #f4fbf6;
+  color: #397451;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #48a66b;
+  box-shadow: 0 0 0 4px rgba(72, 166, 107, 0.12);
+}
+
+.module-grid {
+  /* 多列模块布局；在窄屏断点处会改为单列。 */
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.module-card {
+  min-height: 142px;
+  padding: 24px;
+  border: 1px solid #e4eaf3;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.module-card h2 {
+  margin: 0 0 10px;
+  color: #263851;
+  font-size: 17px;
+}
+
+.module-card p {
+  margin: 0;
+  color: #748196;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.page-footer {
+  /* 通用居中页脚样式；认证页后文会覆盖为左右分布的布局。 */
+  padding: 24px 4px 0;
+  color: #8692a3;
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    padding-top: 32px;
+  }
+
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .module-card {
+    min-height: auto;
+  }
+}
+
+/* 认证页主题色覆盖：统一品牌栏、介绍区、表单卡片和工作台的配色基线。 */
+:root {
+  color: #18283d;
+  background: #f2f5f8;
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 14% 13%, rgba(72, 129, 180, 0.11), transparent 30rem),
+    radial-gradient(ellipse at 87% 78%, rgba(192, 157, 100, 0.09), transparent 28rem),
+    #f2f5f8;
+}
+
+.auth-shell {
+  /* 页面外层为纵向 flex，页脚留在内容之后；主体宽度随屏幕尺寸收缩。 */
+  width: min(100% - 64px, 1170px);
+  min-height: 100vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-bar {
+  /* 顶部品牌栏容纳学校标识和安全会话提示。 */
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid rgba(25, 47, 70, 0.09);
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: #173b5a;
+  color: #fff;
+  font-family: Georgia, serif;
+  font-size: 21px;
+  font-weight: 700;
+  box-shadow: 0 7px 16px rgba(23, 59, 90, 0.2);
+}
+
+.brand-name {
+  color: #1d334a;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+}
+
+.brand-unit {
+  margin-top: 4px;
+  color: #7d8b9a;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+}
+
+.secure-label {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e0e7ec;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #728292;
+  font-size: 11px;
+}
+
+.secure-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #45a17f;
+  box-shadow: 0 0 0 3px rgba(69, 161, 127, 0.12);
+}
+
+.content-grid {
+  /* 桌面端将介绍区和认证卡片并排；移动端在下方断点改为单列。 */
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(350px, 0.8fr);
+  align-items: center;
+  gap: clamp(56px, 9vw, 136px);
+  padding: 64px 0 80px;
+}
+
+.intro-panel {
+  max-width: 560px;
+  padding-bottom: 10px;
+}
+
+.eyebrow {
+  color: #537d9c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.19em;
+}
+
+.intro-panel h1 {
+  margin: 24px 0 22px;
+  color: #18324a;
+  font-family: Georgia, 'Songti SC', serif;
+  font-size: clamp(42px, 5.3vw, 64px);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+}
+
+.intro-panel h1 span {
+  color: #7694a8;
+}
+
+.intro-copy {
+  max-width: 440px;
+  margin: 0;
+  color: #6c7d8e;
+  font-size: 14px;
+  line-height: 2;
+}
+
+.role-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 34px;
+  color: #42637f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.role-strip i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #a9b8c2;
+}
+
+.privacy-note {
+  max-width: 435px;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-top: 76px;
+  color: #8794a1;
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.privacy-icon {
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e3eee9;
+  color: #508b71;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.auth-card {
+  /* 登录、首次改密和已登录工作台共用卡片外观。 */
+  width: 100%;
+  max-width: 430px;
+  justify-self: end;
+  padding: clamp(30px, 4vw, 43px);
+  border: 1px solid rgba(220, 228, 234, 0.95);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.91);
+  box-shadow: 0 24px 64px rgba(38, 61, 82, 0.09), 0 2px 6px rgba(38, 61, 82, 0.025);
+  backdrop-filter: blur(12px);
+}
+
+.card-kicker {
+  color: #7890a3;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.auth-card h2 {
+  margin: 12px 0 9px;
+  color: #1e354b;
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.card-description {
+  margin: 0;
+  color: #82909e;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.form-stack {
+  /* 表单统一纵向排列，标签、输入框和按钮之间用 margin 控制节奏。 */
+  display: flex;
+  flex-direction: column;
+  margin-top: 28px;
+}
+
+.form-stack label {
+  margin: 15px 0 8px;
+  color: #52677b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.form-stack input {
+  width: 100%;
+  height: 47px;
+  padding: 0 14px;
+  border: 1px solid #dfe6eb;
+  border-radius: 9px;
+  outline: none;
+  background: #fbfcfd;
+  color: #24394d;
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+
+.form-stack input::placeholder {
+  color: #aab5bf;
+}
+
+.form-stack input:focus {
+  border-color: #6d93ac;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(81, 133, 165, 0.11);
+}
+
+.primary-button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 25px;
+  padding: 0 17px;
+  border: 0;
+  border-radius: 9px;
+  background: #1b4565;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.primary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #25577e;
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.primary-button span {
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.help-line {
+  margin: 20px 0 0;
+  color: #9aa5ae;
+  font-size: 10px;
+  line-height: 1.8;
+  text-align: center;
+}
+
+.form-error {
+  /* 认证失败、改密失败等可操作错误的视觉提示。 */
+  margin: 13px 0 0;
+  color: #b64b4b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.field-hint {
+  margin: 9px 0 0;
+  color: #98a4af;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.account-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 23px;
+  color: #41586d;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.avatar-small,
+.welcome-avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8eff3;
+  color: #3c6683;
+  font-family: Georgia, 'Songti SC', serif;
+  font-weight: 700;
+}
+
+.avatar-small {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+
+.role-tag {
+  margin-left: auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #eef3f6;
+  color: #5d7b90;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.welcome-card {
+  /* 登录后卡片居中展示身份；账号操作区与信息卡片另行左对齐。 */
+  text-align: center;
+}
+
+.welcome-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.change-password-form {
+  margin-top: 22px;
+  padding-top: 19px;
+  border-top: 1px solid #e8edf0;
+  text-align: left;
+}
+
+.text-button {
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: #8a98a5;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.text-button:hover:not(:disabled) {
+  color: #365e7d;
+}
+
+.welcome-avatar {
+  width: 58px;
+  height: 58px;
+  margin: 26px auto 13px;
+  background: #e8f0f3;
+  font-size: 24px;
+}
+
+.large-tag {
+  display: inline-block;
+  margin: 0;
+}
+
+.welcome-card h2 {
+  margin-top: 13px;
+  font-size: 20px;
+}
+
+.workspace-panel {
+  /* 当前角色工作台说明区域，只提供界面导航提示，不承担权限判断。 */
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-top: 24px;
+  padding: 17px;
+  border: 1px solid #e5ebef;
+  border-radius: 12px;
+  background: #f9fbfc;
+  text-align: left;
+}
+
+.workspace-icon {
+  flex: 0 0 auto;
+  width: 33px;
+  height: 33px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #e7eef2;
+  color: #4d748f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.workspace-panel h3 {
+  margin: 1px 0 6px;
+  color: #304a61;
+  font-size: 12px;
+}
+
+.workspace-panel p {
+  margin: 0;
+  color: #84919c;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.scope-section {
+  /* 管理员有效授权摘要；实际数据访问仍由后端按授权范围校验。 */
+  margin-top: 23px;
+  text-align: left;
+}
+
+.scope-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #607486;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.scope-heading span {
+  min-width: 18px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #edf2f5;
+  color: #6f8799;
+  text-align: center;
+}
+
+.scope-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.scope-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #f5f8fa;
+  color: #8a98a4;
+  font-size: 9px;
+}
+
+.scope-code {
+  overflow-wrap: anywhere;
+  color: #486f89;
+  font-weight: 700;
+}
+
+.empty-scope {
+  color: #9aa5ae;
+  font-size: 10px;
+}
+
+.loading-card {
+  /* 首屏正在查询会话时使用的居中状态卡片。 */
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #8493a0;
+  font-size: 12px;
+}
+
+.loader {
+  width: 27px;
+  height: 27px;
+  border: 2px solid #dfe8ed;
+  border-top-color: #4e7b99;
+  border-radius: 50%;
+  animation: spin 750ms linear infinite;
+}
+
+.loading-card p {
+  margin-top: 15px;
+}
+
+.page-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 20px 0 24px;
+  border-top: 1px solid rgba(25, 47, 70, 0.08);
+  color: #97a3ad;
+  font-size: 10px;
+  text-align: left;
+}
+
+.page-footer i {
+  margin: 0 4px;
+  color: #bdc6cc;
+  font-style: normal;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 780px) {
+  /* 平板及手机布局：介绍内容和认证卡片纵向排列，卡片占满可用宽度。 */
+  .auth-shell {
+    width: min(100% - 40px, 560px);
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    padding: 48px 0 58px;
+  }
+
+  .intro-panel {
+    max-width: 520px;
+  }
+
+  .intro-panel h1 {
+    margin-top: 17px;
+    font-size: clamp(38px, 10vw, 54px);
+  }
+
+  .privacy-note {
+    margin-top: 27px;
+  }
+
+  .auth-card {
+    justify-self: stretch;
+    max-width: none;
+  }
+}
+
+@media (max-width: 460px) {
+  /* 小屏手机进一步收紧页边距、品牌栏和表单卡片留白。 */
+  .auth-shell {
+    width: min(100% - 30px, 420px);
+  }
+
+  .brand-bar {
+    min-height: 82px;
+  }
+
+  .secure-label {
+    padding: 7px 9px;
+    font-size: 9px;
+  }
+
+  .brand-unit {
+    font-size: 9px;
+  }
+
+  .auth-card {
+    padding: 26px 22px;
+  }
+
+  .page-footer {
+    flex-direction: column;
+  }
+}
