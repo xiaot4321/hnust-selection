@@ -17,11 +17,12 @@ public class AdminAccountAuthorizationResponse {
     private final String status;
     private final Long revokedBy;
     private final String revokedAt;
+    private final String revocationReason;
 
     public AdminAccountAuthorizationResponse(Long authorizationId, String capabilityCode,
                                              Long collegeId, Long batchId, String basis,
                                              Long grantedBy, String grantedAt, String status,
-                                             Long revokedBy, String revokedAt) {
+                                             Long revokedBy, String revokedAt, String revocationReason) {
         this.authorizationId = authorizationId;
         this.capabilityCode = capabilityCode;
         this.collegeId = collegeId;
@@ -32,6 +33,7 @@ public class AdminAccountAuthorizationResponse {
         this.status = status;
         this.revokedBy = revokedBy;
         this.revokedAt = revokedAt;
+        this.revocationReason = revocationReason;
     }
 
     public Long getAuthorizationId() { return authorizationId; }
@@ -44,4 +46,5 @@ public class AdminAccountAuthorizationResponse {
     public String getStatus() { return status; }
     public Long getRevokedBy() { return revokedBy; }
     public String getRevokedAt() { return revokedAt; }
+    public String getRevocationReason() { return revocationReason; }
 }

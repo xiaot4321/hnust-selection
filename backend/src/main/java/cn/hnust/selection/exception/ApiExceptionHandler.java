@@ -9,10 +9,13 @@ import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import javax.validation.ConstraintViolationException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,8 +50,10 @@ public class ApiExceptionHandler {
         return response(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", "请求参数不合法", data);
     }
 
-    /** JSON 无法解析或路径参数类型不符时返回统一的参数错误。 */
-    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    /** JSON、路径/查询参数、必填请求头或方法参数约束不合法时返回统一的参数错误。 */
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
+        MissingRequestHeaderException.class, MissingServletRequestParameterException.class,
+        ConstraintViolationException.class})
     public org.springframework.http.ResponseEntity<Result<?>> handleInvalidRequest(Exception exception) {
         return response(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", "请求格式或参数不合法", null);
     }
