@@ -1,21 +1,21 @@
 package cn.hnust.selection.service.impl;
 
+import cn.hnust.selection.entity.AccountEntity;
+import cn.hnust.selection.entity.AdminAuthorizationEntity;
+import cn.hnust.selection.entity.AdminAuthorizationOperationEntity;
 import cn.hnust.selection.enums.AccountRole;
 import cn.hnust.selection.enums.AdminAuthorizationStatusFilter;
 import cn.hnust.selection.enums.AdminCapabilityCode;
 import cn.hnust.selection.exception.ApiException;
 import cn.hnust.selection.repository.AccountRepository;
-import cn.hnust.selection.repository.AccountRepository.AccountRecord;
 import cn.hnust.selection.repository.AdminAccountAuthorizationRepository;
-import cn.hnust.selection.repository.AdminAccountAuthorizationRepository.AuthorizationRecord;
-import cn.hnust.selection.repository.AdminAccountAuthorizationRepository.ExistingOperation;
 import cn.hnust.selection.request.GrantAdminAuthorizationRequest;
 import cn.hnust.selection.request.RevokeAdminAuthorizationRequest;
-import cn.hnust.selection.response.AdminAccountAuthorizationResponse;
-import cn.hnust.selection.response.AdminAuthorizationCommandResponse;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AccountAuthorizationService;
 import cn.hnust.selection.service.AdminAccountAuthorizationService;
+import cn.hnust.selection.vo.AdminAccountAuthorizationVO;
+import cn.hnust.selection.vo.AdminAuthorizationCommandVO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
@@ -29,15 +29,15 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
  * 管理员账号业务能力授权用例的事务实现。
  *
- * <p>本类刻意与 Controller 分开：它从数据库刷新操作者权限、验证总管理员学院范围，
+ * <p>本类刻意与 Controller 分开：它从数据库刷新操作者权限、验证总管理员能力和目标学院，
  * 锁定操作者和目标账号，校验能力目录与批次归属，并在同一 InnoDB 事务里保存授权、
  * 幂等操作和审计事件。失败时整个事务回滚，避免出现“授权写入但无审计”或反向的不一致。</p>
  *
@@ -76,7 +76,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
      */
     @Override
     @Transactional(readOnly = true)
-    public List<AdminAccountAuthorizationResponse> listAuthorizations(
+    public List<AdminAccountAuthorizationVO> listAuthorizations(
         AccountPrincipal actor, Long targetAccountId, Long collegeId, AdminAuthorizationStatusFilter status) {
         requirePositiveId(targetAccountId, "目标账号 ID");
         requirePositiveId(collegeId, "学院 ID");
@@ -87,10 +87,10 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
         requireCollegeExists(collegeId);
         requireAdminTarget(targetAccountId, false, currentActor.getAccountId());
 
-        List<AuthorizationRecord> records = authorizationRepository.findAuthorizations(
+        List<AdminAuthorizationEntity> records = authorizationRepository.findAuthorizations(
             targetAccountId, collegeId, status.name());
-        List<AdminAccountAuthorizationResponse> responses = new ArrayList<AdminAccountAuthorizationResponse>();
-        for (AuthorizationRecord record : records) {
+        List<AdminAccountAuthorizationVO> responses = new ArrayList<AdminAccountAuthorizationVO>();
+        for (AdminAuthorizationEntity record : records) {
             responses.add(toResponse(record));
         }
         return responses;
@@ -104,7 +104,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
      */
     @Override
     @Transactional
-    public AdminAuthorizationCommandResponse grant(AccountPrincipal actor, Long targetAccountId,
+    public AdminAuthorizationCommandVO grant(AccountPrincipal actor, Long targetAccountId,
                                                    GrantAdminAuthorizationRequest request,
                                                    String idempotencyKey) {
         if (request == null) throw invalidArgument("缺少授权请求内容");
@@ -116,6 +116,10 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
         idempotencyKey = normalizeUuidV4(idempotencyKey);
 
         String capabilityCode = validateGrantableCapability(request.getCapabilityCode());
+        if ("COLLEGE_ADMIN".equals(capabilityCode) && request.getBatchId() != null) {
+            // 学院人员与资格管理是学院级范围；批次授权无法安全覆盖人员档案与年度资格数据。
+            throw invalidArgument("COLLEGE_ADMIN 必须授予整个学院范围，不能限定到单个批次");
+        }
         AccountPrincipal currentActor = refreshAndValidateActor(actor, true);
         if (targetAccountId.equals(currentActor.getAccountId())) {
             throw forbidden("常规授权接口只能管理其他管理员账号");
@@ -126,7 +130,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
 
         String fingerprint = fingerprint(GRANT_ACTION, targetAccountId, capabilityCode,
             request.getCollegeId(), request.getBatchId(), basis);
-        Optional<AdminAuthorizationCommandResponse> replay = replayIfPresent(
+        Optional<AdminAuthorizationCommandVO> replay = replayIfPresent(
             currentActor.getAccountId(), GRANT_ACTION, idempotencyKey, fingerprint, "GRANTED");
         if (replay.isPresent()) return replay.get();
 
@@ -142,14 +146,14 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
         Long authorizationId = authorizationRepository.insertAuthorization(targetAccountId,
             request.getCollegeId(), request.getBatchId(), capabilityCode, basis,
             currentActor.getAccountId());
-        AuthorizationRecord granted = authorizationRepository.findAuthorizationById(authorizationId)
+        AdminAuthorizationEntity granted = authorizationRepository.findAuthorizationById(authorizationId)
             .orElseThrow(() -> new IllegalStateException("New authorization row was not found"));
 
         authorizationRepository.insertAuditEvent(operationId, currentActor.getAccountId(), GRANT_ACTION,
             authorizationId, scopeBasis(granted.getCollegeId(), granted.getBatchId()), null,
             auditSnapshot(granted), null);
         authorizationRepository.completeOperation(operationId);
-        return new AdminAuthorizationCommandResponse(authorizationId, "GRANTED");
+        return new AdminAuthorizationCommandVO(authorizationId, "GRANTED");
     }
 
     /**
@@ -160,7 +164,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
      */
     @Override
     @Transactional
-    public AdminAuthorizationCommandResponse revoke(AccountPrincipal actor, Long targetAccountId,
+    public AdminAuthorizationCommandVO revoke(AccountPrincipal actor, Long targetAccountId,
                                                     Long authorizationId,
                                                     RevokeAdminAuthorizationRequest request,
                                                     String idempotencyKey) {
@@ -177,13 +181,13 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
             throw forbidden("常规授权接口只能管理其他管理员账号");
         }
         String fingerprint = fingerprint(REVOKE_ACTION, targetAccountId, authorizationId, reason);
-        Optional<AdminAuthorizationCommandResponse> replay = replayIfPresent(
+        Optional<AdminAuthorizationCommandVO> replay = replayIfPresent(
             currentActor.getAccountId(), REVOKE_ACTION, idempotencyKey, fingerprint, "REVOKED");
         if (replay.isPresent()) return replay.get();
 
         // 先锁目标账号，再锁它所属的授权行；撤销授权不会删除记录，因此之后仍可审计。
         requireAdminTarget(targetAccountId, true, currentActor.getAccountId());
-        AuthorizationRecord before = authorizationRepository.findAuthorizationForUpdate(
+        AdminAuthorizationEntity before = authorizationRepository.findAuthorizationForUpdate(
             targetAccountId, authorizationId)
             .orElseThrow(() -> notFound("未找到该管理员的授权记录"));
         requireAccountManagerScope(currentActor, before.getCollegeId());
@@ -198,13 +202,13 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
             // 条件 UPDATE 是行状态的最后保护；影响行数为 0 时回滚操作记录和任何后续审计写入。
             throw stateConflict("该授权状态已变化，请重新读取后再操作");
         }
-        AuthorizationRecord after = authorizationRepository.findAuthorizationById(authorizationId)
+        AdminAuthorizationEntity after = authorizationRepository.findAuthorizationById(authorizationId)
             .orElseThrow(() -> new IllegalStateException("Revoked authorization row was not found"));
         authorizationRepository.insertAuditEvent(operationId, currentActor.getAccountId(), REVOKE_ACTION,
             authorizationId, scopeBasis(before.getCollegeId(), before.getBatchId()), auditSnapshot(before),
             auditSnapshot(after), reason);
         authorizationRepository.completeOperation(operationId);
-        return new AdminAuthorizationCommandResponse(authorizationId, "REVOKED");
+        return new AdminAuthorizationCommandVO(authorizationId, "REVOKED");
     }
 
     /**
@@ -217,11 +221,11 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
         if (actor == null || actor.getAccountId() == null) {
             throw new ApiException("UNAUTHENTICATED", "登录状态已失效", HttpStatus.UNAUTHORIZED);
         }
-        Optional<AccountRecord> account = forUpdate
+        Optional<AccountEntity> account = forUpdate
             ? accountRepository.findByIdForUpdate(actor.getAccountId())
             : accountRepository.findById(actor.getAccountId());
         if (!account.isPresent()) throw new ApiException("UNAUTHENTICATED", "登录状态已失效", HttpStatus.UNAUTHORIZED);
-        AccountRecord current = account.get();
+        AccountEntity current = account.get();
         if (!"ACTIVE".equalsIgnoreCase(current.getAccountStatus())) {
             throw new ApiException("ACCOUNT_DISABLED", "账号已停用", HttpStatus.FORBIDDEN);
         }
@@ -235,7 +239,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
         }
     }
 
-    /** 总管理员能力必须同时匹配学院；角色 ADMIN 本身不会自动获得总管理员权限。 */
+    /** 总管理员管理能力由保留授权标记识别；目标学院仍需存在且有效，ADMIN 角色本身不代表总管理员。 */
     private void requireAccountManagerScope(AccountPrincipal actor, Long collegeId) {
         accountAuthorizationService.requireCapability(actor, ADMIN_ACCOUNT_MANAGER, collegeId, null);
     }
@@ -245,7 +249,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
         if (forUpdate && actorAccountId != null && actorAccountId.equals(targetAccountId)) {
             throw forbidden("常规授权接口只能管理其他管理员账号");
         }
-        Optional<AccountRecord> target = forUpdate
+        Optional<AccountEntity> target = forUpdate
             ? accountRepository.findByIdForUpdate(targetAccountId)
             : accountRepository.findById(targetAccountId);
         if (!target.isPresent() || !AccountRole.ADMIN.name().equals(target.get().getRoleCode())) {
@@ -295,22 +299,22 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
      * <p>相同操作者/动作/键且请求摘要相同，直接返回原授权 ID；相同键但请求内容不同则拒绝，
      * 不会误把新请求合并到之前的授权操作。</p>
      */
-    private Optional<AdminAuthorizationCommandResponse> replayIfPresent(Long actorAccountId,
+    private Optional<AdminAuthorizationCommandVO> replayIfPresent(Long actorAccountId,
                                                                          String actionCode,
                                                                          String idempotencyKey,
                                                                          String fingerprint,
                                                                          String successResult) {
-        Optional<ExistingOperation> existing = authorizationRepository.findOperation(
+        Optional<AdminAuthorizationOperationEntity> existing = authorizationRepository.findOperation(
             actorAccountId, actionCode, idempotencyKey);
         if (!existing.isPresent()) return Optional.empty();
-        ExistingOperation operation = existing.get();
+        AdminAuthorizationOperationEntity operation = existing.get();
         if (!fingerprint.equals(operation.getFingerprint())) {
             throw new ApiException("IDEMPOTENCY_KEY_REUSED", "幂等键已用于不同请求", HttpStatus.CONFLICT);
         }
         if (!"OK".equals(operation.getResultCode()) || operation.getAuthorizationId() == null) {
             throw new ApiException("REQUEST_IN_PROGRESS", "相同幂等请求仍在处理", HttpStatus.CONFLICT);
         }
-        return Optional.of(new AdminAuthorizationCommandResponse(operation.getAuthorizationId(), successResult));
+        return Optional.of(new AdminAuthorizationCommandVO(operation.getAuthorizationId(), successResult));
     }
 
     /** 使用稳定字段顺序构造请求摘要，再通过 SHA-256 生成适合 business_operation 保存的指纹。 */
@@ -327,7 +331,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
     }
 
     /** 以固定字段顺序生成不含密码等敏感数据的审计快照 JSON。 */
-    private String auditSnapshot(AuthorizationRecord record) {
+    private String auditSnapshot(AdminAuthorizationEntity record) {
         Map<String, Object> values = new LinkedHashMap<String, Object>();
         values.put("authorizationId", record.getId());
         values.put("accountId", record.getAccountId());
@@ -353,8 +357,8 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
     }
 
     /** 将数据库授权记录投影到只包含 API 允许字段的响应对象。 */
-    private AdminAccountAuthorizationResponse toResponse(AuthorizationRecord record) {
-        return new AdminAccountAuthorizationResponse(record.getId(), record.getCapabilityCode(),
+    private AdminAccountAuthorizationVO toResponse(AdminAuthorizationEntity record) {
+        return new AdminAccountAuthorizationVO(record.getId(), record.getCapabilityCode(),
             record.getCollegeId(), record.getBatchId(), record.getBasis(), record.getGrantedBy(),
             isoTime(record.getGrantedAt()), record.isRevoked() ? "REVOKED" : "ACTIVE",
             record.getRevokedBy(), isoTime(record.getRevokedAt()), record.getRevocationReason());

@@ -3,9 +3,9 @@ package cn.hnust.selection.controller;
 import cn.hnust.selection.common.Result;
 import cn.hnust.selection.request.LoginRequest;
 import cn.hnust.selection.request.PasswordChangeRequest;
-import cn.hnust.selection.response.AuthSessionResponse;
-import cn.hnust.selection.response.AuthUserResponse;
-import cn.hnust.selection.response.PasswordChangeResponse;
+import cn.hnust.selection.vo.AuthSessionVO;
+import cn.hnust.selection.vo.AuthUserVO;
+import cn.hnust.selection.vo.PasswordChangeVO;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AccountAuthService;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -65,7 +65,7 @@ public class AuthController {
      * 写入新的 SecurityContext，再轮换 CSRF Cookie。响应只返回身份概要，不返回 Session 标识。</p>
      */
     @PostMapping("/login")
-    public Result<AuthSessionResponse> login(@Valid @RequestBody LoginRequest request,
+    public Result<AuthSessionVO> login(@Valid @RequestBody LoginRequest request,
                                              HttpServletRequest servletRequest,
                                              HttpServletResponse servletResponse) {
         Authentication authentication = authenticationManager.authenticate(
@@ -80,7 +80,7 @@ public class AuthController {
         SecurityContextHolder.setContext(context);
         rotateCsrfToken(servletRequest, servletResponse);
         AccountPrincipal principal = (AccountPrincipal) authentication.getPrincipal();
-        return Result.success(new AuthSessionResponse(AuthUserResponse.from(principal)));
+        return Result.success(new AuthSessionVO(AuthUserVO.from(principal)));
     }
 
     /**
@@ -102,8 +102,8 @@ public class AuthController {
      * 前端用它恢复页面登录状态；响应不包含密码哈希、临时凭证明文或授权审计信息。
      */
     @GetMapping("/me")
-    public Result<AuthUserResponse> me(@org.springframework.security.core.annotation.AuthenticationPrincipal AccountPrincipal principal) {
-        return Result.success(AuthUserResponse.from(principal));
+    public Result<AuthUserVO> me(@org.springframework.security.core.annotation.AuthenticationPrincipal AccountPrincipal principal) {
+        return Result.success(AuthUserVO.from(principal));
     }
 
     /**
@@ -111,7 +111,7 @@ public class AuthController {
      * Service 完成数据库事务；Controller 随后把当前请求的主体替换为改密后的新主体。
      */
     @PostMapping("/password-change")
-    public Result<PasswordChangeResponse> changePassword(@Valid @RequestBody PasswordChangeRequest request,
+    public Result<PasswordChangeVO> changePassword(@Valid @RequestBody PasswordChangeRequest request,
                                                          HttpServletRequest servletRequest,
                                                          HttpServletResponse servletResponse) {
         Authentication currentAuthentication = SecurityContextHolder.getContext().getAuthentication();
@@ -129,7 +129,7 @@ public class AuthController {
         // 轮换 Session ID 和 CSRF 令牌；旧设备上的会话会因数据库 row_version 变化在下次请求时失效。
         servletRequest.changeSessionId();
         rotateCsrfToken(servletRequest, servletResponse);
-        return Result.success(new PasswordChangeResponse(true, updatedPrincipal.isMustChangePassword()));
+        return Result.success(new PasswordChangeVO(true, updatedPrincipal.isMustChangePassword()));
     }
 
     private void rotateCsrfToken(HttpServletRequest request, HttpServletResponse response) {

@@ -18,8 +18,6 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -46,12 +44,6 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
         this.accountAuthenticationProvider = accountAuthenticationProvider;
         this.accountAuthService = accountAuthService;
         this.objectMapper = objectMapper;
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        // 正式密码与临时凭证都只存 BCrypt 哈希。强度 10 是当前本地开发基线；明文不会写入数据库。
-        return new BCryptPasswordEncoder(10);
     }
 
     @Bean

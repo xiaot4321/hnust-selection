@@ -3,8 +3,8 @@ package cn.hnust.selection.service;
 import cn.hnust.selection.enums.AdminAuthorizationStatusFilter;
 import cn.hnust.selection.request.GrantAdminAuthorizationRequest;
 import cn.hnust.selection.request.RevokeAdminAuthorizationRequest;
-import cn.hnust.selection.response.AdminAccountAuthorizationResponse;
-import cn.hnust.selection.response.AdminAuthorizationCommandResponse;
+import cn.hnust.selection.vo.AdminAccountAuthorizationVO;
+import cn.hnust.selection.vo.AdminAuthorizationCommandVO;
 import cn.hnust.selection.security.AccountPrincipal;
 
 import java.util.List;
@@ -17,15 +17,15 @@ import java.util.List;
  */
 public interface AdminAccountAuthorizationService {
     /** 查询一个 ADMIN 账号在指定学院范围内的有效授权或审计历史。 */
-    List<AdminAccountAuthorizationResponse> listAuthorizations(
+    List<AdminAccountAuthorizationVO> listAuthorizations(
         AccountPrincipal actor, Long targetAccountId, Long collegeId, AdminAuthorizationStatusFilter status);
 
     /** 为其他 ADMIN 账号授予一个服务端已登记的普通业务能力。 */
-    AdminAuthorizationCommandResponse grant(
+    AdminAuthorizationCommandVO grant(
         AccountPrincipal actor, Long targetAccountId, GrantAdminAuthorizationRequest request, String idempotencyKey);
 
     /** 撤销目标 ADMIN 账号的一条普通业务能力授权，并保留授权行历史。 */
-    AdminAuthorizationCommandResponse revoke(
+    AdminAuthorizationCommandVO revoke(
         AccountPrincipal actor, Long targetAccountId, Long authorizationId,
         RevokeAdminAuthorizationRequest request, String idempotencyKey);
 }

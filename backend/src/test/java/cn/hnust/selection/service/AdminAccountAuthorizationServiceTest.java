@@ -1,15 +1,15 @@
 package cn.hnust.selection.service;
 
 import cn.hnust.selection.enums.AdminAuthorizationStatusFilter;
+import cn.hnust.selection.entity.AdminAuthorizationOperationEntity;
 import cn.hnust.selection.exception.ApiException;
 import cn.hnust.selection.repository.AccountRepository;
-import cn.hnust.selection.repository.AccountRepository.AccountRecord;
+import cn.hnust.selection.entity.AccountEntity;
 import cn.hnust.selection.repository.AdminAccountAuthorizationRepository;
-import cn.hnust.selection.repository.AdminAccountAuthorizationRepository.AuthorizationRecord;
-import cn.hnust.selection.repository.AdminAccountAuthorizationRepository.ExistingOperation;
+import cn.hnust.selection.entity.AdminAuthorizationEntity;
 import cn.hnust.selection.request.GrantAdminAuthorizationRequest;
 import cn.hnust.selection.request.RevokeAdminAuthorizationRequest;
-import cn.hnust.selection.response.AdminAuthorizationCommandResponse;
+import cn.hnust.selection.vo.AdminAuthorizationCommandVO;
 import cn.hnust.selection.security.AccountAuthorization;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.impl.AccountAuthorizationServiceImpl;
@@ -52,8 +52,8 @@ class AdminAccountAuthorizationServiceTest {
     private AdminAccountAuthorizationRepository authorizationRepository;
     private AdminAccountAuthorizationService service;
     private AccountPrincipal superAdmin;
-    private AccountRecord superAdminRecord;
-    private AccountRecord targetAdminRecord;
+    private AccountEntity superAdminRecord;
+    private AccountEntity targetAdminRecord;
 
     @BeforeEach
     void setUp() {
@@ -85,7 +85,7 @@ class AdminAccountAuthorizationServiceTest {
 
         GrantAdminAuthorizationRequest request = grantRequest("BATCH_AUDIT", COLLEGE_ID, null,
             "学院审计授权审批记录 A-01");
-        AdminAuthorizationCommandResponse response = service.grant(superAdmin, TARGET_ID, request, GRANT_KEY);
+        AdminAuthorizationCommandVO response = service.grant(superAdmin, TARGET_ID, request, GRANT_KEY);
 
         assertEquals(81L, response.getAuthorizationId());
         assertEquals("GRANTED", response.getResult());
@@ -186,9 +186,9 @@ class AdminAccountAuthorizationServiceTest {
         verify(authorizationRepository).insertOperation(eq(ACTOR_ID), eq("ADMIN_AUTHORIZATION_GRANT"),
             eq(COLLEGE_ID), eq(null), eq(GRANT_KEY), fingerprint.capture());
         when(authorizationRepository.findOperation(ACTOR_ID, "ADMIN_AUTHORIZATION_GRANT", GRANT_KEY))
-            .thenReturn(Optional.of(new ExistingOperation(fingerprint.getValue(), "OK", 82L)));
+            .thenReturn(Optional.of(new AdminAuthorizationOperationEntity(fingerprint.getValue(), "OK", 82L)));
 
-        AdminAuthorizationCommandResponse retry = service.grant(superAdmin, TARGET_ID, request, GRANT_KEY);
+        AdminAuthorizationCommandVO retry = service.grant(superAdmin, TARGET_ID, request, GRANT_KEY);
 
         assertEquals(82L, retry.getAuthorizationId());
         assertEquals("GRANTED", retry.getResult());
@@ -201,7 +201,7 @@ class AdminAccountAuthorizationServiceTest {
         prepareActor(true);
         when(authorizationRepository.collegeExists(COLLEGE_ID)).thenReturn(true);
         when(authorizationRepository.findOperation(ACTOR_ID, "ADMIN_AUTHORIZATION_GRANT", GRANT_KEY))
-            .thenReturn(Optional.of(new ExistingOperation("different-request", "OK", 82L)));
+            .thenReturn(Optional.of(new AdminAuthorizationOperationEntity("different-request", "OK", 82L)));
 
         ApiException exception = assertThrows(ApiException.class,
             () -> service.grant(superAdmin, TARGET_ID,
@@ -217,9 +217,9 @@ class AdminAccountAuthorizationServiceTest {
         prepareTargetForUpdate(targetAdminRecord);
         when(authorizationRepository.findOperation(ACTOR_ID, "ADMIN_AUTHORIZATION_REVOKE", REVOKE_KEY))
             .thenReturn(Optional.empty());
-        AuthorizationRecord before = record(81L, TARGET_ID, COLLEGE_ID, 25L, "BATCH_AUDIT",
+        AdminAuthorizationEntity before = record(81L, TARGET_ID, COLLEGE_ID, 25L, "BATCH_AUDIT",
             "批次授权依据", ACTOR_ID, null);
-        AuthorizationRecord after = record(81L, TARGET_ID, COLLEGE_ID, 25L, "BATCH_AUDIT",
+        AdminAuthorizationEntity after = record(81L, TARGET_ID, COLLEGE_ID, 25L, "BATCH_AUDIT",
             "批次授权依据", ACTOR_ID, ACTOR_ID);
         when(authorizationRepository.findAuthorizationForUpdate(TARGET_ID, 81L)).thenReturn(Optional.of(before));
         when(authorizationRepository.insertOperation(eq(ACTOR_ID), eq("ADMIN_AUTHORIZATION_REVOKE"),
@@ -228,7 +228,7 @@ class AdminAccountAuthorizationServiceTest {
         when(authorizationRepository.findAuthorizationById(81L)).thenReturn(Optional.of(after));
 
         RevokeAdminAuthorizationRequest request = revokeRequest("原授权期限届满");
-        AdminAuthorizationCommandResponse response = service.revoke(
+        AdminAuthorizationCommandVO response = service.revoke(
             superAdmin, TARGET_ID, 81L, request, REVOKE_KEY);
 
         assertEquals(81L, response.getAuthorizationId());
@@ -261,7 +261,7 @@ class AdminAccountAuthorizationServiceTest {
         prepareActor(true);
         when(accountRepository.findById(TARGET_ID)).thenReturn(Optional.of(targetAdminRecord));
         when(authorizationRepository.collegeExists(COLLEGE_ID)).thenReturn(true);
-        AuthorizationRecord active = record(81L, TARGET_ID, COLLEGE_ID, null, "BATCH_AUDIT",
+        AdminAuthorizationEntity active = record(81L, TARGET_ID, COLLEGE_ID, null, "BATCH_AUDIT",
             "授权依据", ACTOR_ID, null);
         when(authorizationRepository.findAuthorizations(TARGET_ID, COLLEGE_ID, "ACTIVE"))
             .thenReturn(Collections.singletonList(active));
@@ -271,14 +271,14 @@ class AdminAccountAuthorizationServiceTest {
     }
 
     private void prepareActor(boolean hasAccountManagerCapability) {
-        AccountRecord actorRecord = account(ACTOR_ID, "ADMIN", "ACTIVE");
+        AccountEntity actorRecord = account(ACTOR_ID, "ADMIN", "ACTIVE");
         when(accountRepository.findByIdForUpdate(ACTOR_ID)).thenReturn(Optional.of(actorRecord));
         when(accountRepository.findById(ACTOR_ID)).thenReturn(Optional.of(actorRecord));
         when(accountRepository.toPrincipal(actorRecord, false)).thenReturn(
             principal(ACTOR_ID, hasAccountManagerCapability));
     }
 
-    private void prepareTargetForUpdate(AccountRecord target) {
+    private void prepareTargetForUpdate(AccountEntity target) {
         when(accountRepository.findByIdForUpdate(TARGET_ID)).thenReturn(Optional.of(target));
     }
 
@@ -291,8 +291,8 @@ class AdminAccountAuthorizationServiceTest {
                 : Collections.singletonList(new AccountAuthorization(COLLEGE_ID, null, "BATCH_AUDIT")));
     }
 
-    private AccountRecord account(Long accountId, String role, String status) {
-        return new AccountRecord(accountId, "admin-" + accountId, role, status,
+    private AccountEntity account(Long accountId, String role, String status) {
+        return new AccountEntity(accountId, "admin-" + accountId, role, status,
             "unused-hash", false, new Timestamp(1000L), 1L);
     }
 
@@ -312,11 +312,11 @@ class AdminAccountAuthorizationServiceTest {
         return request;
     }
 
-    private AuthorizationRecord record(Long id, Long accountId, Long collegeId, Long batchId,
+    private AdminAuthorizationEntity record(Long id, Long accountId, Long collegeId, Long batchId,
                                        String capabilityCode, String basis, Long grantedBy, Long revokedBy) {
         Timestamp grantedAt = Timestamp.valueOf("2026-10-03 08:00:00");
         Timestamp revokedAt = revokedBy == null ? null : Timestamp.valueOf("2026-10-03 09:00:00");
-        return new AuthorizationRecord(id, accountId, collegeId, batchId, capabilityCode,
+        return new AdminAuthorizationEntity(id, accountId, collegeId, batchId, capabilityCode,
             null, basis, grantedBy, grantedAt, revokedBy, revokedAt,
             revokedBy == null ? null : "原授权期限届满");
     }

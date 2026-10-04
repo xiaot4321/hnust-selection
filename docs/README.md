@@ -6,21 +6,23 @@
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| [总体需求](../requirements.md) | 范围、角色、流程、功能、共性约束和决策索引 | 0.20 需求与设计定案基线 |
-| [分轮业务规则](business-rules.md) | 已确认匹配规则、例外处理及冲突记录 | 0.12 业务规则基线 |
-| [状态机设计](state-machine.md) | 批次、阶段、志愿、学生状态、申请和关系状态 | 0.11 已确认设计基线 |
-| [权限矩阵](permission-matrix.md) | 角色权限、数据范围、敏感字段访问 | 1.0 已确认设计基线 |
-| [用户故事](user-stories.md) | 角色场景和验收要点 | 1.0 已确认验收基线；尚未实现/测试 |
-| [待确认事项登记表](todo-register.md) | 待确认事项与已确认决策的统一登记，含数据设计输入约束 | 2.5 决策记录；TODO-49 暂缓，TODO-50/52 已确认 |
-| [逻辑数据模型](logical-data-model.md) | 核心实体关系图、属性、唯一性、状态归属、事务、历史与访问边界 | 0.7 已确认基线；TODO-49 暂缓 |
-| [物理数据库设计与数据字典](database-design.md) | 逻辑实体到 MySQL/InnoDB 表的映射、字段类型、约束、索引和事务并发设计 | 0.5 已确认定稿；目标 MySQL 5.7.36，不含 DDL |
-| [MySQL 5.7.36 初始建库 DDL](../sql/mysql57/schema.sql) | 49 张表、主键、唯一键、索引及外键的首次建库脚本 | 已应用到本机 MySQL 5.7.36-log 验证库；业务方核验 49 张表、151 个外键；其他环境部署须准备迁移/回滚方案 |
-| [功能模块设计](functional-modules.md) | 学生、导师、管理端功能清单、模块职责、数据归属、模块协作及用户故事追踪 | 0.5 已确认的功能基线 |
-| [API 设计](api-design.md) | 端点目录、请求/响应契约、错误码、认证授权、幂等和并发语义 | 0.4 已确认实施契约 |
+| [总体需求](../requirements.md) | 范围、角色、流程、功能、共性约束和决策索引 | 0.23 总管理员系统级权限补充 |
+| [分轮业务规则](business-rules.md) | 已确认匹配规则、例外处理及冲突记录 | 0.14 总管理员系统级权限补充 |
+| [状态机设计](state-machine.md) | 批次、阶段、志愿、学生状态、申请和关系状态 | 0.12 总管理员系统级权限补充 |
+| [权限矩阵](permission-matrix.md) | 角色权限、数据范围、敏感字段访问 | 1.3 总管理员系统级权限补充 |
+| [用户故事](user-stories.md) | 角色场景和验收要点 | 1.3 总管理员系统级权限补充 |
+| [待确认事项登记表](todo-register.md) | 待确认事项与已确认决策的统一登记，含数据设计输入约束 | 2.7 决策记录；TODO-49 暂缓，TODO-50 至 TODO-56 已确认 |
+| [逻辑数据模型](logical-data-model.md) | 核心实体关系图、属性、唯一性、状态归属、事务、历史与访问边界 | 0.8 人员资格唯一当前版本补充；TODO-49 暂缓 |
+| [物理数据库设计与数据字典](database-design.md) | 逻辑实体到 MySQL/InnoDB 表的映射、字段类型、约束、索引和事务并发设计 | 0.6 人员管理增补；目标 MySQL 5.7.36 |
+| [MySQL 5.7.36 完整建库 DDL](../sql/mysql57/schema.sql) | 50 张表、主键、唯一键、索引及 158 个外键的首次建库脚本 | 本机迁移结构已应用，恢复脚本写入总管理员授权和审计各一行；其他环境部署须准备迁移/回滚方案 |
+| [MySQL 前向迁移](../sql/mysql57/migrations/20261003_personnel_management_v1.sql) | 为旧版本机验证库添加资格唯一当前槽位、导入关联及总管理员人员能力 | 2026-10-03 本机结构变更已应用；不得对已迁移库重跑完整迁移 |
+| [人员管理迁移恢复脚本](../sql/mysql57/migrations/20261003_personnel_management_v1_recovery.sql) | 修复本机迁移中因 MySQL 会话字符集导致失败的总管理员授权及审计记录 | 2026-10-03 本机恢复成功；授权和审计各写入一行；脚本可重复执行，仅适用于已部分应用 v1 结构的验证库 |
+| [功能模块设计](functional-modules.md) | 学生、导师、管理端功能清单、模块职责、数据归属、模块协作及用户故事追踪 | 0.8 总管理员系统级权限补充 |
+| [API 设计](api-design.md) | 端点目录、请求/响应契约、错误码、认证授权、幂等和并发语义 | 0.7 总管理员系统级权限补充 |
 
 ## 项目代码
 
-根目录 [README](../README.md) 提供运行方法；`backend/` 是 Spring Boot 后端，`frontend/` 是 Vue + TypeScript + Vite 前端。当前已实现本地账号登录/登出、当前账号查询、首次及常规改密、一次性临时凭证消费、角色端点限制和管理员能力范围校验。TODO-52 新确认的管理员能力授予/撤销 API 已写入 API 设计 0.4，尚未实现；其他互选业务接口和工作台仍待实现。数据库连接使用本机已建立的 `hnust_selection`，应用启动时关闭 SQL 初始化，不会重跑 `sql/mysql57/schema.sql`。
+根目录 [README](../README.md) 提供运行方法；`backend/` 是 Spring Boot 后端，`frontend/` 是 Vue + TypeScript + Vite 前端。已实现管理员账号生命周期与授权、学院人员/专业/年度资格管理、CSV/XLSX 名单导入及管理界面；批次、志愿、导师办理、关系名额等互选业务仍待实现。数据库凭据从环境变量读取，应用启动时关闭 SQL 初始化，不会自动重跑 DDL 或迁移。
 
 ## 版本记录
 
@@ -56,10 +58,15 @@
 | 2026-10-02 | 按本机环境定版前端工具链：Node.js 22.20.0、npm 10.9.3、TypeScript 5.2.2；本机未安装 Vite，按 Node.js 兼容性选定 Vite 8.3.2 | requirements 0.19；todo-register 2.4；AGENTS、项目总览、本文件 |
 | 2026-10-02 | 按已定案技术栈创建 Spring Boot/MyBatis-Plus 后端与 Vue/TypeScript/Vite 前端骨架，数据库凭据改由环境变量提供，禁用启动时 SQL 初始化 | README、backend/、frontend/、本文件 |
 | 2026-10-03 | 业务方确认 TODO-52：仅总管理员可为其他 ADMIN 账号授予/撤销普通业务能力；`ADMIN_ACCOUNT_MANAGER` 仅通过初始化或应急恢复流程设置。同步权限矩阵、管理员用例和 API v0.4 契约 | requirements 0.20；permission-matrix 1.0；functional-modules 0.5；api-design 0.4；todo-register 2.5；AGENTS、本文件 |
+| 2026-10-03 | 按业务方要求新增总管理员查看现有管理员账号的小窗；增加分页目录 API 和最小账号概要，并同步权限、验收故事与 API 实施契约 | requirements 0.21；permission-matrix 1.1；user-stories 1.1；functional-modules 0.6；api-design 0.5；本文件 |
+| 2026-10-03 | 按已确认 TODO-53 至 TODO-55 实现总管理员生命周期、学院人员/专业/资格管理和固定模板逐行导入；增加前向迁移、管理页面、测试与实施契约 | requirements 0.22；business-rules 0.13；permission-matrix 1.2；user-stories 1.2；functional-modules 0.7；logical-data-model 0.8；database-design 0.6；api-design 0.6；本文件 |
+| 2026-10-03 | 修正迁移预检对不存在的 `person_type` 列的引用，显式设置 `utf8mb4` 会话字符集；为本机已部分执行的迁移增加可重复运行的恢复脚本 | `sql/mysql57/migrations/`；database-design；本文件、SQL README |
+| 2026-10-03 | 业务方执行人员管理迁移及恢复脚本；结构计数预检通过，总管理员业务授权与审计记录各成功写入一行 | 本机 MySQL 5.7.36-log 验证库；SQL README、database-design、本文件 |
+| 2026-10-03 | 按业务方确认的 TODO-56 将总管理员定义为系统级管理员：全部已登记管理员能力和全系统学院/批次范围；同步服务端授权、前端学院选择、测试与规则文档 | requirements 0.23；business-rules 0.14；state-machine 0.12；permission-matrix 1.3；user-stories 1.3；functional-modules 0.8；api-design 0.7；todo-register 2.7；本文件 |
 
 ## 定案后的实施与部署工作
 
-逻辑数据模型、状态机、权限矩阵、用户故事、功能模块、物理数据库设计和 API 契约均已按现有内容定案；`TODO-01` 至 `TODO-48`、`TODO-50/52` 已确认并同步，TODO-39 与 TODO-07 的冲突按方案 B 解决，TODO-49 暂缓。目标数据库版本为 MySQL 5.7.36。业务模块可依据这些文档进入实现；以下是实施和部署工作，不是设计审批阻塞项：
+逻辑数据模型、状态机、权限矩阵、用户故事、功能模块、物理数据库设计和 API 契约均已按现有内容定案；`TODO-01` 至 `TODO-48`、`TODO-50` 至 `TODO-56` 已确认并同步，TODO-39 与 TODO-07 的冲突按方案 B 解决，TODO-49 暂缓。目标数据库版本为 MySQL 5.7.36。其他互选流程可依据文档继续实现；部署和运维验证仍须按下述事项执行：
 
 1. **按定案基线开发：** 使用功能模块、逻辑/物理数据模型、状态机、权限矩阵和 API 契约建设业务项目。后端按 Java 8、Spring Boot 2.6.6、MyBatis-Plus 3.3.1 和本机 Maven 3.9.1；前端采用 Vue 3、TypeScript 5.2.2、Vite 8.3.2、Node.js 22.20.0 和 npm 10.9.3。首条端到端流程建议覆盖批次配置与冻结、学生提交志愿、导师处理、关系/名额原子更新、轮次结案及结果查询。
 2. **部署与运维验证：** 目标环境部署前核对 MySQL 版本、学校数据字段长度和 `utf8mb4_unicode_ci` 语义，准备迁移/回滚脚本，并落实学校认证要求、私有文件存储/扫描、备份恢复、批量压测及总管理员应急恢复流程（登记表 `TODO-24`）。初始脚本已应用到本机验证库，不要直接重跑；本次定稿不自动批准向其他或生产环境部署。

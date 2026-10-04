@@ -1,6 +1,8 @@
 package cn.hnust.selection.repository;
 
 import cn.hnust.selection.enums.AccountRole;
+import cn.hnust.selection.entity.AccountEntity;
+import cn.hnust.selection.entity.TemporaryCredentialEntity;
 import cn.hnust.selection.security.AccountAuthorization;
 import cn.hnust.selection.security.AccountIdentity;
 import cn.hnust.selection.security.AccountPrincipal;
@@ -35,10 +37,10 @@ public class AccountRepository {
     }
 
     // 多个账号查询共用同一映射，避免不同 SQL 对账号状态、版本号等字段产生不一致解释。
-    private final RowMapper<AccountRecord> accountRowMapper = new RowMapper<AccountRecord>() {
+    private final RowMapper<AccountEntity> accountRowMapper = new RowMapper<AccountEntity>() {
         @Override
-        public AccountRecord mapRow(ResultSet rs, int rowNum) throws SQLException {
-            return new AccountRecord(rs.getLong("id"), rs.getString("login_identifier"),
+        public AccountEntity mapRow(ResultSet rs, int rowNum) throws SQLException {
+            return new AccountEntity(rs.getLong("id"), rs.getString("login_identifier"),
                 rs.getString("role_code"), rs.getString("account_status"),
                 rs.getString("password_hash"), rs.getBoolean("must_change_password"),
                 rs.getTimestamp("credential_changed_at"), rs.getLong("row_version"));
@@ -46,7 +48,7 @@ public class AccountRepository {
     };
 
     /** 按唯一登录标识查账号；唯一性由数据库约束保证，未命中时以空 Optional 表示。 */
-    public Optional<AccountRecord> findByLoginIdentifier(String loginIdentifier) {
+    public Optional<AccountEntity> findByLoginIdentifier(String loginIdentifier) {
         // 唯一键由 DDL 保证；不存在时返回 Optional.empty，认证层统一转成凭证无效错误。
         try {
             return Optional.of(jdbcTemplate.queryForObject(
@@ -59,7 +61,7 @@ public class AccountRepository {
     }
 
     /** 按内部账号主键读取认证字段；账号不存在时返回空，调用方决定对应业务错误。 */
-    public Optional<AccountRecord> findById(Long accountId) {
+    public Optional<AccountEntity> findById(Long accountId) {
         try {
             return Optional.of(jdbcTemplate.queryForObject(
                 "SELECT id, login_identifier, role_code, account_status, password_hash, " +
@@ -76,7 +78,7 @@ public class AccountRepository {
      * <p>{@code FOR UPDATE} 会在当前事务结束前锁住命中的 InnoDB 行，用于串行化同一账号的改密流程，
      * 避免并发请求基于旧密码/旧临时凭证状态同时写入。此方法本身不创建事务。</p>
      */
-    public Optional<AccountRecord> findByIdForUpdate(Long accountId) {
+    public Optional<AccountEntity> findByIdForUpdate(Long accountId) {
         try {
             // 仅供事务内改密使用。InnoDB 行锁让同一账号的改密/临时凭证消费串行化。
             return Optional.of(jdbcTemplate.queryForObject(
@@ -97,7 +99,7 @@ public class AccountRepository {
      * @param account 已读取的账号认证字段
      * @param temporaryCredentialLogin 当前会话是否通过临时凭证建立
      */
-    public AccountPrincipal toPrincipal(AccountRecord account, boolean temporaryCredentialLogin) {
+    public AccountPrincipal toPrincipal(AccountEntity account, boolean temporaryCredentialLogin) {
         AccountRole role;
         try {
             role = AccountRole.valueOf(account.getRoleCode());
@@ -161,7 +163,7 @@ public class AccountRepository {
             }, accountId);
     }
 
-    public List<TemporaryCredential> findTemporaryCredentials(Long accountId, boolean forUpdate) {
+    public List<TemporaryCredentialEntity> findTemporaryCredentials(Long accountId, boolean forUpdate) {
         // 改密时需保留 used_at / revoked_at / 到期状态，才能区分错误、已消费和已失效凭证。
         // 只读取最近 20 条签发记录以限制哈希比对成本；forUpdate=true 会锁定这些凭证行，
         // 应与账号行锁在同一事务中使用，不能在事务外借此声称具备并发保护。
@@ -169,16 +171,16 @@ public class AccountRepository {
             "(expires_at > UTC_TIMESTAMP(3)) AS not_expired FROM temporary_credential " +
             "WHERE account_id = ? ORDER BY issued_at DESC, id DESC LIMIT 20" +
             (forUpdate ? " FOR UPDATE" : "");
-        return jdbcTemplate.query(sql, new RowMapper<TemporaryCredential>() {
-            @Override public TemporaryCredential mapRow(ResultSet rs, int rowNum) throws SQLException {
-                return new TemporaryCredential(rs.getLong("id"), rs.getString("credential_hash"),
+        return jdbcTemplate.query(sql, new RowMapper<TemporaryCredentialEntity>() {
+            @Override public TemporaryCredentialEntity mapRow(ResultSet rs, int rowNum) throws SQLException {
+                return new TemporaryCredentialEntity(rs.getLong("id"), rs.getString("credential_hash"),
                     rs.getTimestamp("used_at") != null, rs.getTimestamp("revoked_at") != null,
                     rs.getBoolean("not_expired"));
             }
         }, accountId);
     }
 
-    public List<TemporaryCredential> findValidTemporaryCredentials(Long accountId) {
+    public List<TemporaryCredentialEntity> findValidTemporaryCredentials(Long accountId) {
         // 登录只需要验证当前可用的临时凭证，因此由 SQL 排除已用、已撤销、已过期记录，
         // 减少对无效 BCrypt 哈希的昂贵比较。not_expired 列对返回记录固定为 true，供通用对象映射。
         return jdbcTemplate.query(
@@ -186,9 +188,9 @@ public class AccountRepository {
                 "FROM temporary_credential WHERE account_id = ? AND used_at IS NULL " +
                 "AND revoked_at IS NULL AND expires_at > UTC_TIMESTAMP(3) " +
                 "ORDER BY issued_at DESC, id DESC LIMIT 20",
-            new RowMapper<TemporaryCredential>() {
-                @Override public TemporaryCredential mapRow(ResultSet rs, int rowNum) throws SQLException {
-                    return new TemporaryCredential(rs.getLong("id"), rs.getString("credential_hash"),
+            new RowMapper<TemporaryCredentialEntity>() {
+                @Override public TemporaryCredentialEntity mapRow(ResultSet rs, int rowNum) throws SQLException {
+                    return new TemporaryCredentialEntity(rs.getLong("id"), rs.getString("credential_hash"),
                         false, false, true);
                 }
             }, accountId);
@@ -219,66 +221,4 @@ public class AccountRepository {
         jdbcTemplate.update("UPDATE account SET last_login_at = UTC_TIMESTAMP(3) WHERE id = ?", accountId);
     }
 
-    /**
-     * account 表认证查询的只读结果对象。
-     * 不提供公开 setter，减少数据从查询结果构造后被意外改写的机会；密码哈希只在认证 Service 内使用。
-     */
-    public static class AccountRecord {
-        private final Long id;
-        private final String loginIdentifier;
-        private final String roleCode;
-        private final String accountStatus;
-        private final String passwordHash;
-        private final boolean mustChangePassword;
-        private final Timestamp credentialChangedAt;
-        private final long rowVersion;
-
-        public AccountRecord(Long id, String loginIdentifier, String roleCode, String accountStatus,
-                             String passwordHash, boolean mustChangePassword,
-                             Timestamp credentialChangedAt, long rowVersion) {
-            this.id = id;
-            this.loginIdentifier = loginIdentifier;
-            this.roleCode = roleCode;
-            this.accountStatus = accountStatus;
-            this.passwordHash = passwordHash;
-            this.mustChangePassword = mustChangePassword;
-            this.credentialChangedAt = credentialChangedAt;
-            this.rowVersion = rowVersion;
-        }
-
-        public Long getId() { return id; }
-        public String getLoginIdentifier() { return loginIdentifier; }
-        public String getRoleCode() { return roleCode; }
-        public String getAccountStatus() { return accountStatus; }
-        public String getPasswordHash() { return passwordHash; }
-        public boolean isMustChangePassword() { return mustChangePassword; }
-        public Timestamp getCredentialChangedAt() { return credentialChangedAt; }
-        public long getRowVersion() { return rowVersion; }
-    }
-
-    /**
-     * 临时凭证查询结果的只读对象。
-     * credentialHash 用于服务端 BCrypt 比对；used、revoked 和 notExpired 由查询时数据库状态映射。
-     */
-    public static class TemporaryCredential {
-        private final Long id;
-        private final String credentialHash;
-        private final boolean used;
-        private final boolean revoked;
-        private final boolean notExpired;
-
-        public TemporaryCredential(Long id, String credentialHash, boolean used, boolean revoked, boolean notExpired) {
-            this.id = id;
-            this.credentialHash = credentialHash;
-            this.used = used;
-            this.revoked = revoked;
-            this.notExpired = notExpired;
-        }
-
-        public Long getId() { return id; }
-        public String getCredentialHash() { return credentialHash; }
-        public boolean isUsed() { return used; }
-        public boolean isRevoked() { return revoked; }
-        public boolean isNotExpired() { return notExpired; }
-    }
 }

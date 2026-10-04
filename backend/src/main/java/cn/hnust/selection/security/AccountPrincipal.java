@@ -1,6 +1,7 @@
 package cn.hnust.selection.security;
 
 import cn.hnust.selection.enums.AccountRole;
+import cn.hnust.selection.enums.AdminCapabilityCode;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -76,7 +77,22 @@ public class AccountPrincipal implements UserDetails, Serializable {
         for (AccountAuthorization authorization : authorizations) {
             authorities.add(new SimpleGrantedAuthority(authorization.getCapabilityCode()));
         }
+        // 总管理员的保留能力使其在 Spring 方法级权限表达式中也拥有全部已登记管理员能力。
+        // 只对 ADMIN 角色生效；不会添加 ROLE_STUDENT 或 ROLE_TEACHER，也不把它们的身份混成管理员。
+        if (role == AccountRole.ADMIN && hasCapability("ADMIN_ACCOUNT_MANAGER")) {
+            for (AdminCapabilityCode capability : AdminCapabilityCode.values()) {
+                authorities.add(new SimpleGrantedAuthority(capability.name()));
+            }
+        }
         return Collections.unmodifiableSet(authorities);
+    }
+
+    /** 检查当前会话是否包含指定的有效能力快照；过滤器会在每次请求时刷新该快照。 */
+    private boolean hasCapability(String capabilityCode) {
+        for (AccountAuthorization authorization : authorizations) {
+            if (capabilityCode.equals(authorization.getCapabilityCode())) return true;
+        }
+        return false;
     }
 
     // UserDetails 需要提供 password，但凭证在 Provider 中已经验证完毕；这里不返回数据库哈希，

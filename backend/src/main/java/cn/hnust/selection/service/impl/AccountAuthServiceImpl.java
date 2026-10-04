@@ -1,9 +1,9 @@
 package cn.hnust.selection.service.impl;
 
 import cn.hnust.selection.exception.ApiException;
+import cn.hnust.selection.entity.AccountEntity;
+import cn.hnust.selection.entity.TemporaryCredentialEntity;
 import cn.hnust.selection.repository.AccountRepository;
-import cn.hnust.selection.repository.AccountRepository.AccountRecord;
-import cn.hnust.selection.repository.AccountRepository.TemporaryCredential;
 import cn.hnust.selection.service.AccountAuthService;
 import cn.hnust.selection.security.AccountPrincipal;
 import org.springframework.http.HttpStatus;
@@ -61,14 +61,14 @@ public class AccountAuthServiceImpl implements AccountAuthService {
             passwordEncoder.matches("invalid", DUMMY_PASSWORD_HASH);
             throw new BadCredentialsException("Invalid credentials");
         }
-        Optional<AccountRecord> found = accountRepository.findByLoginIdentifier(loginIdentifier);
+        Optional<AccountEntity> found = accountRepository.findByLoginIdentifier(loginIdentifier);
         if (!found.isPresent()) {
             // 使用虚拟哈希完成与普通失败请求相似的密码计算；对外仍返回同一种凭证错误。
             passwordEncoder.matches(credential, DUMMY_PASSWORD_HASH);
             throw new BadCredentialsException("Invalid credentials");
         }
 
-        AccountRecord account = found.get();
+        AccountEntity account = found.get();
         // 停用账号按文档返回 ACCOUNT_DISABLED，不继续验证密码或建立会话。
         if (!"ACTIVE".equalsIgnoreCase(account.getAccountStatus())) {
             throw new DisabledException("Account disabled");
@@ -85,7 +85,7 @@ public class AccountAuthServiceImpl implements AccountAuthService {
         if (!passwordMatches) {
             // SQL 已过滤掉过期、已撤销和已消费记录；Java 层再次检查状态，避免数据映射变化时误放行。
             // 每个账号只读取最近一小段有效凭证历史，避免无界遍历大量 BCrypt 哈希。
-            for (TemporaryCredential temporary : accountRepository.findValidTemporaryCredentials(account.getId())) {
+            for (TemporaryCredentialEntity temporary : accountRepository.findValidTemporaryCredentials(account.getId())) {
                 if (!temporary.isUsed() && !temporary.isRevoked() && temporary.isNotExpired()
                     && passwordEncoder.matches(credential, temporary.getCredentialHash())) {
                     temporaryCredential = true;
@@ -125,7 +125,7 @@ public class AccountAuthServiceImpl implements AccountAuthService {
     public AccountPrincipal refreshPrincipal(Long accountId, boolean temporaryCredentialLogin) {
         // 每个受保护请求都通过此处重新加载账号状态、角色、人员关联、版本号及管理员授权。
         // Session 只作为账号主键和认证流程标记的载体，不能作为当前授权是否仍有效的唯一依据。
-        Optional<AccountRecord> found = accountRepository.findById(accountId);
+        Optional<AccountEntity> found = accountRepository.findById(accountId);
         if (!found.isPresent()) return null;
         return accountRepository.toPrincipal(found.get(), temporaryCredentialLogin);
     }
@@ -147,7 +147,7 @@ public class AccountAuthServiceImpl implements AccountAuthService {
         validateNewPassword(newPassword);
         // 先锁账号行再读取/消费临时凭证。并发改密请求在同一账号行上串行，第二个请求会看到首个事务结果。
         // 账号不存在时无法继续确认当前身份，返回未认证而不是创建新记录。
-        AccountRecord account = accountRepository.findByIdForUpdate(principal.getAccountId())
+        AccountEntity account = accountRepository.findByIdForUpdate(principal.getAccountId())
             .orElseThrow(() -> new ApiException("UNAUTHENTICATED", "登录状态已失效", HttpStatus.UNAUTHORIZED));
         if (!"ACTIVE".equalsIgnoreCase(account.getAccountStatus())) {
             throw new ApiException("ACCOUNT_DISABLED", "账号已停用", HttpStatus.FORBIDDEN);
@@ -157,10 +157,10 @@ public class AccountAuthServiceImpl implements AccountAuthService {
         boolean consumeTemporaryCredential = principal.isMustChangePassword()
             || principal.isTemporaryCredentialLogin();
         if (consumeTemporaryCredential) {
-            TemporaryCredential matched = null;
+            TemporaryCredentialEntity matched = null;
             // 这里要包含已消费记录：若凭证明文能匹配到一条已使用记录，返回更准确的冲突错误；
             // 查询结果按最近签发优先，并在改密事务中加锁，避免并发消费时各自读到可用旧状态。
-            for (TemporaryCredential temporary : accountRepository.findTemporaryCredentials(account.getId(), true)) {
+            for (TemporaryCredentialEntity temporary : accountRepository.findTemporaryCredentials(account.getId(), true)) {
                 if (passwordEncoder.matches(currentCredential, temporary.getCredentialHash())) {
                     matched = temporary;
                     break;
@@ -188,7 +188,7 @@ public class AccountAuthServiceImpl implements AccountAuthService {
         // BCrypt 只编码新密码，数据库永远不保存新密码明文。临时凭证消费和密码更新处于同一事务，
         // 更新或后续读取失败都会回滚凭证消费，避免用户凭证被消耗但密码没有成功设置。
         accountRepository.updatePassword(account.getId(), passwordEncoder.encode(newPassword));
-        AccountRecord updated = accountRepository.findById(account.getId())
+        AccountEntity updated = accountRepository.findById(account.getId())
             .orElseThrow(() -> new ApiException("UNAUTHENTICATED", "登录状态已失效", HttpStatus.UNAUTHORIZED));
         return accountRepository.toPrincipal(updated, false);
     }

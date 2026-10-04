@@ -1,6 +1,7 @@
 package cn.hnust.selection.service;
 
 import cn.hnust.selection.enums.AccountRole;
+import cn.hnust.selection.enums.AdminCapabilityCode;
 import cn.hnust.selection.security.AccountAuthorization;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.impl.AccountAuthorizationServiceImpl;
@@ -22,13 +23,31 @@ class AccountAuthorizationServiceTest {
     @Test
     void adminCapabilityIsRestrictedToItsCollegeAndOptionalBatch() {
         AccountPrincipal admin = principal(AccountRole.ADMIN, Arrays.asList(
-            new AccountAuthorization(7L, null, "ADMIN_ACCOUNT_MANAGER"),
+            new AccountAuthorization(7L, null, "COLLEGE_ADMIN"),
             new AccountAuthorization(7L, 22L, "BATCH_AUDIT")));
 
-        assertTrue(authorizationService.hasCapability(admin, "ADMIN_ACCOUNT_MANAGER", 7L, null));
+        assertTrue(authorizationService.hasCapability(admin, "COLLEGE_ADMIN", 7L, null));
+        assertTrue(authorizationService.hasCapability(admin, "COLLEGE_ADMIN", 7L, 23L));
+        assertFalse(authorizationService.hasCapability(admin, "COLLEGE_ADMIN", 8L, null));
         assertTrue(authorizationService.hasCapability(admin, "BATCH_AUDIT", 7L, 22L));
         assertFalse(authorizationService.hasCapability(admin, "BATCH_AUDIT", 7L, 23L));
-        assertFalse(authorizationService.hasCapability(admin, "ADMIN_ACCOUNT_MANAGER", 8L, null));
+        assertFalse(authorizationService.hasCapability(admin, "ADMIN_ACCOUNT_MANAGER", 7L, null));
+    }
+
+    @Test
+    void totalAdminHasAllRegisteredCapabilitiesAcrossAllCollegeAndBatchScopes() {
+        AccountPrincipal totalAdmin = principal(AccountRole.ADMIN, Collections.singletonList(
+            new AccountAuthorization(7L, null, "ADMIN_ACCOUNT_MANAGER")));
+
+        assertTrue(authorizationService.hasCapability(totalAdmin, "ADMIN_ACCOUNT_MANAGER", 999L, 888L));
+        for (AdminCapabilityCode capability : AdminCapabilityCode.values()) {
+            assertTrue(authorizationService.hasCapability(totalAdmin, capability.name(), 999L, 888L));
+            assertTrue(totalAdmin.getAuthorities().stream()
+                .anyMatch(authority -> capability.name().equals(authority.getAuthority())));
+        }
+        assertFalse(authorizationService.hasCapability(totalAdmin, "NOT_A_REGISTERED_CAPABILITY", 999L, 888L));
+        assertFalse(totalAdmin.getAuthorities().stream().anyMatch(a -> "ROLE_STUDENT".equals(a.getAuthority())));
+        assertFalse(totalAdmin.getAuthorities().stream().anyMatch(a -> "ROLE_TEACHER".equals(a.getAuthority())));
     }
 
     @Test

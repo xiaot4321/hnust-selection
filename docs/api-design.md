@@ -1,9 +1,9 @@
 # 师生互选系统 API 设计
 
-> 版本：0.4（业务方确认定稿）  
-> 状态：业务方于 2026-10-03 确认管理员业务授权规则；端点路径、请求/响应字段和第 10 节技术方案构成实施契约。部署验证项见第 10 节。  
+> 版本：0.7（总管理员系统级权限补充）
+> 状态：业务方于 2026-10-03 确认总管理员拥有全部已登记管理员业务能力和全系统学院/批次范围；既有端点路径、请求/响应字段和第 10 节技术方案继续构成实施契约。
 > 更新日期：2026-10-03  
-> 基线：[总体需求](../requirements.md) 0.20、[业务规则](business-rules.md) 0.12、[状态机](state-machine.md) 0.11、[权限矩阵](permission-matrix.md) 1.0、[用户故事](user-stories.md) 1.0、[功能模块设计](functional-modules.md) 0.5、[物理数据库设计](database-design.md) 0.5。
+> 基线：[总体需求](../requirements.md) 0.23、[业务规则](business-rules.md) 0.14、[状态机](state-machine.md) 0.12、[权限矩阵](permission-matrix.md) 1.3、[用户故事](user-stories.md) 1.3、[功能模块设计](functional-modules.md) 0.8、[物理数据库设计](database-design.md) 0.6。
 
 ## 1. 设计范围与原则
 
@@ -79,7 +79,7 @@
 1. **学生本人：** `/me` 类 API 从认证主体解析学生 ID。志愿、身份确认、补选、资料和结果接口不接受客户端指定 `studentId`；写入只能作用于本人。
 2. **导师本人：** 导师资料和可报范围只可维护本人；申请队列和决定接口要验证申请确实投向该导师、属于当前可办理阶段，并过滤到授权资料字段。不能查询学生其他志愿、联系方式或成绩。
 3. **管理员：** 同时校验管理员能力、学院/批次授权范围、对象状态和具体操作权限。查询、敏感字段读取、关系例外和导出均使用相同数据范围过滤。
-4. **总管理员：** 仍是普通 `ADMIN` 业务主体；管理员账户创建/重置及其他管理员账号的业务能力授权/撤销端点要求总管理员权限。此身份不扩大其自身批次、名额或关系调整范围。常规 API 不得授予、转移或撤销 `ADMIN_ACCOUNT_MANAGER`；仅允许系统初始化设置或按 TODO-24 应急恢复流程处理。
+4. **总管理员：** 仍是 `ADMIN` 业务主体，但隐式拥有全部已登记管理员业务能力并覆盖全系统启用学院/批次；管理员账户创建/重置及其他管理员账号的业务能力授权/撤销仍为其专属操作。该能力不授予 `ROLE_STUDENT` / `ROLE_TEACHER`，也不跳过业务对象状态、名额、时间或审计检查。常规 API 不得授予、转移或撤销 `ADMIN_ACCOUNT_MANAGER`；仅允许系统初始化设置或按 TODO-24 应急恢复流程处理。
 5. **文件和导出：** 每次下载/导出独立授权；字段由服务端白名单生成，不能信任客户端提交的字段集合。访问简历、联系方式或导出数据时写入访问记录。
 6. **状态门禁：** 权限通过不等于操作可用。领域服务还须检查批次、阶段、申请、学生匹配状态、冻结范围及截止时间；不得通过换 URL 或伪造对象 ID 绕过。
 
@@ -146,9 +146,14 @@
 
 | 方法与路径 | 权限 | 主要请求/响应 | 关键限制 |
 |---|---|---|---|
-| `POST /api/admin/personnel-imports`、`GET /api/admin/personnel-imports/{importId}` | ADMIN 授权范围 | 上传导入文件/任务及逐行处理概要 | 保留逐行结果；禁止导入密码或不必要的敏感字段。 |
-| `GET /api/admin/personnel-imports/{importId}/rows` | ADMIN 授权范围 | 分页逐行结果/错误定位 | 检查任务所属学院/批次授权。 |
-| `POST /api/admin/students`、`POST /api/admin/teachers` | ADMIN 授权范围 | 人员/账号创建请求；响应受限人员概要 | 仅写入授权字段；账号临时凭证按独立安全流程交付。 |
+| `GET /api/admin/personnel/colleges`、`GET /api/admin/personnel/academic-years?collegeId={id}` | ADMIN + `COLLEGE_ADMIN`（总管理员隐含） | 当前授权学院和学年目录 | 普通管理员只返回已授权范围；总管理员的学院目录包含全部启用学院。 |
+| `GET /api/admin/students?collegeId={id}&pageNo=1&pageSize=20&identifier={studentNo}`、`GET /api/admin/teachers?...` | ADMIN + `COLLEGE_ADMIN` | 分页人员概要；可按学号/工号精确查询 | 只返回当前学院、必要身份字段，不返回联系方式/凭证。 |
+| `POST /api/admin/students`、`POST /api/admin/teachers` | ADMIN + `COLLEGE_ADMIN` | 创建账号与初始档案；响应含一次性临时凭证 | 必须带 `Idempotency-Key`；人员与账号唯一性由数据库约束保护。 |
+| `GET /api/admin/majors?collegeId={id}`、`POST /api/admin/majors`、`PATCH /api/admin/majors/{majorId}` | ADMIN + `COLLEGE_ADMIN` | 查询、新建、修改/停用专业目录 | 专业按学院和代码唯一；已被人员档案引用的专业不物理删除。 |
+| `POST /api/admin/annual-eligibilities`、`GET /api/admin/annual-eligibilities?...` | ADMIN + `COLLEGE_ADMIN` | 更新资格并查询当前/历史记录 | 更新追加历史；同一人员每学年最多一条当前资格。状态 `ELIGIBLE` / `INELIGIBLE`。 |
+| `GET /api/admin/personnel-imports/template?collegeId={id}&personType=STUDENT\|TEACHER` | ADMIN + `COLLEGE_ADMIN` | 下载 UTF-8 CSV 模板 | 学生/导师列头按固定模板版本区分。 |
+| `POST /api/admin/personnel-imports`、`GET /api/admin/personnel-imports/{importId}` | ADMIN + `COLLEGE_ADMIN` | 上传 CSV/XLSX、任务概要及首次逐行结果 | 文件 ≤10 MB；每次最多 2000 数据行；表头错误拒绝整份，行错误不中断其他行。 |
+| `GET /api/admin/personnel-imports/{importId}/rows` | ADMIN + `COLLEGE_ADMIN` | 历史逐行结果/错误定位 | 按任务学院范围检查；查询响应永不返回已展示凭证。 |
 | `PATCH /api/admin/students/{studentId}/classification` | ADMIN 授权范围 | 专业、学位类型、变更依据及预期版本 | 追加分类修订；填报开始后的影响由身份纠错用例联动处理。 |
 | `GET /api/admin/identity-correction-requests`、`POST /api/admin/identity-correction-requests/{requestId}/decision` | ADMIN 授权范围 | 申请队列/批准或驳回、依据 | 批准后调用身份纠错用例；不得直接绕过关系和名额事务。 |
 | `POST /api/admin/teacher-profile-versions/{versionId}/review` | ADMIN 授权范围 | 审核通过/退回及意见 | 只有审核通过版本进入学生目录；导师可报范围不由此审核。 |
@@ -161,12 +166,13 @@
 | `POST /api/admin/matching-relations/{relationId}/adjustments` | ADMIN 关系管理权限 | 撤销/恢复/改派类型、新导师（如适用）、原因和审批意见 | 归档批次须先按规则解除归档；关系、学生状态、名额、流水和审计同事务。 |
 | `GET /api/admin/selection-batches/{batchId}/statistics` | ADMIN 授权范围 | 冻结分母、未匹配拆分、补选和名额统计 | 按已确认统计口径；不允许通过筛选改变冻结分母。 |
 | `POST /api/admin/selection-batches/{batchId}/exports`、`GET /api/admin/exports/{exportId}` | ADMIN 导出权限 | 白名单字段/筛选条件；导出任务状态/受控文件 | 字段和对象范围服务端二次校验，导出行为记访问审计。 |
-| `POST /api/admin/admin-accounts`、`POST /api/admin/admin-accounts/{accountId}/temporary-credential-reset` | 总管理员专属能力 | 创建/重置账号；响应一次性临时凭证领取结果 | 临时凭证只展示一次、72 小时有效、线下交付并审计；不得邮件或短信发送。 |
+| `POST /api/admin/admin-accounts`、`POST /api/admin/admin-accounts/{accountId}/temporary-credential-reset` | 总管理员专属能力 | 创建请求：登录标识；重置请求：目标账号路径参数；响应账号概要和一次性临时凭证 | 只创建普通 ADMIN，不自动授予业务能力；临时凭证只展示一次、72 小时有效、线下交付并审计；不得邮件或短信发送；总管理员应急恢复走 TODO-24。 |
+| `GET /api/admin/admin-accounts` | 总管理员专属能力 | 分页查询现有 `ADMIN` 账号；返回账号编号、登录标识、账号状态、首次改密状态和创建时间 | 包含调用者本人；不返回密码、凭证明文/哈希或人员资料；用于确认账号并选择授权或重置目标。 |
 | `GET /api/admin/admin-accounts/{accountId}/authorizations` | 总管理员 | 查询目标管理员的能力授权及授权范围；支持学院、状态筛选 | 仅目标为 ADMIN 账号时返回；该只读接口也可显示初始化/应急流程设置的 `ADMIN_ACCOUNT_MANAGER` 状态。 |
-| `POST /api/admin/admin-accounts/{accountId}/authorizations` | 总管理员 | 授予一项业务能力及学院/可选批次范围 | 请求带 `Idempotency-Key`；按 TODO-52 校验能力代码、对象范围及授权依据，记录授权人、时间和审计；不可授予 `ADMIN_ACCOUNT_MANAGER`。 |
+| `POST /api/admin/admin-accounts/{accountId}/authorizations` | 总管理员 | 授予一项业务能力及学院/可选批次范围 | 请求带 `Idempotency-Key`；支持 `COLLEGE_ADMIN`、`BATCH_AUDIT`，按 TODO-52/53 校验范围及依据；不可授予 `ADMIN_ACCOUNT_MANAGER`；`COLLEGE_ADMIN` 必须覆盖完整学院。 |
 | `POST /api/admin/admin-accounts/{accountId}/authorizations/{authorizationId}/revoke` | 总管理员 | 撤销一项业务能力；请求提供撤销原因 | 请求带 `Idempotency-Key`；只允许撤销该账号、该授权记录上的普通业务能力；保留授权历史并记录撤销人、时间和审计。 |
 
-上表列出的路径按本版本实施。人员主档的其他维护接口、公告管理接口和完整字典接口未纳入本版本契约；实现这些接口前须补充并确认 API 新版本，不得自行推定路径、字段或扩大权限。管理员能力代码须来自服务端支持的授权目录，客户端不得提交任意能力名称以创建新权限。
+上表列出的路径按本版本实施。学生停用、导师停用、身份纠错决策和其他未列管理接口仍未纳入本版本；实现这些接口前须补充并确认 API 新版本，不得自行推定路径、字段或扩大权限。管理员能力代码须来自服务端支持的授权目录；当前服务端目录登记 `COLLEGE_ADMIN`、`BATCH_AUDIT`。`ADMIN_ACCOUNT_MANAGER` 是保留能力，只读可见，不属于可授予目录。
 
 ## 5. 关键请求与响应定义
 
@@ -247,7 +253,7 @@ Content-Type: application/json
 GET /api/admin/admin-accounts/7301/authorizations?collegeId=1&status=ACTIVE
 ```
 
-`collegeId` 为必填范围筛选；`status` 可取 `ACTIVE`、`REVOKED` 或 `ALL`，省略时默认为 `ACTIVE`。响应字段包括 `authorizationId`、`capabilityCode`、`collegeId`、`batchId`、`basis`、`grantedBy`、`grantedAt`、`status`、`revokedBy` 和 `revokedAt`。仅总管理员可调用，且目标账号必须是 ADMIN；所有查询均按学院范围检查。若目标账号持有 `ADMIN_ACCOUNT_MANAGER`，该接口可只读展示其状态，但不能据此修改该能力。
+`collegeId` 为必填范围筛选；`status` 可取 `ACTIVE`、`REVOKED` 或 `ALL`，省略时默认为 `ACTIVE`。响应字段包括 `authorizationId`、`capabilityCode`、`collegeId`、`batchId`、`basis`、`grantedBy`、`grantedAt`、`status`、`revokedBy`、`revokedAt` 和 `revocationReason`；有效授权的撤销字段为空，已撤销授权的理由从对应审计事件读取。仅总管理员可调用，且目标账号必须是 ADMIN；总管理员可查询任一启用学院。若目标账号持有 `ADMIN_ACCOUNT_MANAGER`，该接口可只读展示其状态，但不能据此修改该能力。
 
 授予：
 
@@ -259,14 +265,16 @@ Content-Type: application/json
 
 ```json
 {
-  "capabilityCode": "BATCH_MANAGER",
+  "capabilityCode": "BATCH_AUDIT",
   "collegeId": 1,
   "batchId": 2026,
   "basis": "学院授权审批记录 AUTH-2026-018"
 }
 ```
 
-`batchId` 可省略，表示该能力覆盖指定学院内所有符合其业务定义的批次；提供时服务端检查批次属于同一学院。`capabilityCode` 必须属于服务端支持的业务能力目录，`basis` 必须填写。`grantedBy`、`grantedAt`、授权状态及审计主体由服务端生成。不能授予 `ADMIN_ACCOUNT_MANAGER`；目标账号保持 `ADMIN` 角色，权限仅在请求声明的数据范围内生效。
+`batchId` 可省略，表示该能力覆盖指定学院内所有符合其业务定义的批次；提供时服务端检查批次属于同一学院。`capabilityCode` 必须属于服务端支持的业务能力目录（当前为 `COLLEGE_ADMIN`、`BATCH_AUDIT`）；`COLLEGE_ADMIN` 必须省略 `batchId`，覆盖整个学院；`basis` 必须填写。`grantedBy`、`grantedAt`、授权状态及审计主体由服务端生成。不能授予 `ADMIN_ACCOUNT_MANAGER`；目标账号保持 `ADMIN` 角色，权限仅在请求声明的数据范围内生效。
+
+授予成功的 `data` 为 `{"authorizationId": 8802, "result": "GRANTED"}`。撤销成功的 `data` 为 `{"authorizationId": 8802, "result": "REVOKED"}`；同幂等键重放时返回相同回执。
 
 撤销：
 
@@ -283,6 +291,103 @@ Content-Type: application/json
 ```
 
 撤销原因必填。服务端确认授权记录属于路径中的目标账号、处于有效状态且不是 `ADMIN_ACCOUNT_MANAGER`，然后追加撤销信息 `revokedBy`、`revokedAt` 并记录审计；不物理删除授权历史。授权变更在事务提交后立即影响该账号的后续请求，认证过滤器/授权服务必须读取已提交的最新授权状态。重复授予有效的同一能力与同一范围、或再次撤销已撤销记录，返回 `STATE_CONFLICT`；带相同幂等键和相同请求摘要的重试返回原操作结果。
+
+### 5.7 管理员账号创建与临时凭证重置
+
+创建普通管理员：
+
+```http
+POST /api/admin/admin-accounts
+Idempotency-Key: 4b33...
+Content-Type: application/json
+```
+
+```json
+{
+  "loginIdentifier": "admin-2026-02"
+}
+```
+
+服务端创建 `ACTIVE` 的 `ADMIN` 账号，设置 `mustChangePassword=true`，不设置正式密码，也不自动授予任何业务能力。登录标识在全部角色账号间唯一；已有标识返回 `STATE_CONFLICT`。普通业务能力随后通过本节前述授权接口单独配置。
+
+创建成功的 `data` 包含 `accountId`、`loginIdentifier`、`result: "CREATED"`、`temporaryCredential`、`expiresAt` 和 `credentialShownNow`。临时凭证由安全随机源生成，有效期 72 小时；账号记录中只存安全哈希，首次使用后必须改密。明文仅在首次成功响应中返回，管理员须线下转交，不通过邮件或短信发送。
+
+重置其他普通管理员的临时凭证：
+
+```http
+POST /api/admin/admin-accounts/7301/temporary-credential-reset
+Idempotency-Key: 193e...
+```
+
+服务端锁定目标账号，确认其为普通 `ADMIN` 后，撤销其未消费的旧临时凭证，清除正式密码并将 `mustChangePassword` 设为 `true`，然后签发 72 小时有效的新凭证。账号版本递增使其既有 Session 失效。不能通过普通接口重置总管理员本人；总管理员应急恢复按 TODO-24 线下核验、双人复核和留痕。
+
+创建/重置、凭证生成及一次性展示预留分别写入关联操作与审计；审计不保存凭证明文或哈希。重复的同幂等键和同请求返回原账号回执，但 `temporaryCredential` 为 `null`、`credentialShownNow` 为 `false`，不会再次展示秘密；如首次响应未能保存，须发起一次新的重置命令签发新凭证。同键不同请求返回 `IDEMPOTENCY_KEY_REUSED`。账号创建与权限授予分开操作，便于先核对账号后再设置最小业务范围。
+
+### 5.8 管理员账号目录
+
+```http
+GET /api/admin/admin-accounts?pageNo=1&pageSize=20
+```
+
+仅持有当前有效 `ADMIN_ACCOUNT_MANAGER` 能力的管理员可查询。响应使用通用分页结构：
+
+```json
+{
+  "items": [
+    {
+      "accountId": 7301,
+      "loginIdentifier": "admin-2026-02",
+      "accountStatus": "ACTIVE",
+      "mustChangePassword": false,
+      "createdAt": "2026-10-03T08:00:00.000Z"
+    }
+  ],
+  "total": 2,
+  "pageNo": 1,
+  "pageSize": 20
+}
+```
+
+默认 `pageNo=1`、`pageSize=20`，`pageSize` 范围为 1–100。只列出 `role_code='ADMIN'` 的账号，包含调用者本人；按 `created_at` 倒序、`id` 倒序稳定排序。`accountStatus` 返回账号状态，`mustChangePassword` 表示首次登录或凭证重置后尚须改密。接口只返回账号目录所需的最小信息，不含密码哈希、临时凭证明文/哈希、联系方式或人员资料。总管理员可从管理端小窗将其他管理员选为授权或凭证重置目标；本人账号仅展示，不开放自我授权或常规凭证重置。
+
+### 5.9 人员、专业、年度资格与名单导入
+
+学院人员管理 API 均要求当前 `ADMIN` 主体具有 `COLLEGE_ADMIN`，且请求中的 `collegeId` 与该能力绑定学院一致。此能力只能覆盖完整学院；`BATCH_AUDIT` 等批次授权不能替代它。服务端每次请求都从数据库刷新当前账号和授权，不信任页面隐藏状态或会话旧授权摘要。
+
+学生创建请求：
+
+```json
+{
+  "loginIdentifier": "20260001",
+  "studentNo": "20260001",
+  "fullName": "张同学",
+  "collegeId": 1,
+  "majorCode": "CS-01",
+  "degreeType": "ACADEMIC_MASTER",
+  "enrollmentYearCode": "2026",
+  "classificationBasis": "2026 级录取名单",
+  "classificationReason": "导入初始学生身份分类"
+}
+```
+
+`loginIdentifier` 必须与 `studentNo` 相同；登录名由学号确定，不能为同一学生另设不同登录标识。`degreeType` 仅接受 `ACADEMIC_MASTER`（学硕）或 `PROFESSIONAL_MASTER`（专硕）。服务端创建 `STUDENT` 账号、初始资料版本和 `classification_version=1` 的分类修订记录；专业必须是同学院启用目录项。响应的 `credential` 与管理员账号创建响应结构相同，随机临时凭证 72 小时有效、只在首次响应出现，重复同幂等键不会再次给出凭证。
+
+导师创建请求包含 `loginIdentifier`、`employeeNo`、`fullName`、`collegeId`，且 `loginIdentifier` 必须等于 `employeeNo`。服务端创建 `TEACHER` 账号、基本导师档案及空白 `DRAFT` 资料版本；导师须自行完善资料，审核通过前不对学生公开。学生与导师列表仅包含其登录标识、学号/工号、姓名、学院和必要档案概要。
+
+专业新增请求字段：`collegeId`、`majorCode`、`name`、可选 `validFrom`/`validTo`（`YYYY-MM-DD`）和必填 `changeBasis`。修改请求字段：`name`、`active`、可选有效期、`changeBasis`。专业代码创建后不可修改；停用替代物理删除，保留现有人员与历史批次引用。
+
+年度资格命令字段为 `personType`（`STUDENT`/`TEACHER`）、`personId`、`academicYearId`、`collegeId`、`eligibilityStatus`（`ELIGIBLE`/`INELIGIBLE`）、`evidenceType`、可选 `evidenceReference` 和 `sourceName`。服务端锁定人员行，校验人员学院后结束旧当前记录、追加新历史行并切换唯一当前资格槽位。当前资格查询默认只返回 `validTo=null` 的行；`history=true` 返回所有版本。状态更新、依据、来源、修改人和有效期均保留。
+
+固定模板为 UTF-8 CSV；Excel 用户可直接打开并另存为 XLSX。模板版本为 `1.0`，表头和列顺序固定：
+
+```text
+学生：loginIdentifier,studentNo,fullName,majorCode,degreeType,enrollmentYearCode,eligibilityStatus,evidenceType,evidenceReference
+导师：loginIdentifier,employeeNo,fullName,eligibilityStatus,evidenceType,evidenceReference
+```
+
+模板中的 `loginIdentifier` 与对应学生学号/导师工号必须相同；系统保留两列是为了让登录标识在导入结果中清晰可见，二者不一致的行会拒绝创建。
+
+学年和学院由上传请求参数指定，不可从表格扩展范围。上传接受 `.csv`、`.xlsx`，最大 10 MB、最多 2000 条数据行。表头不完全匹配时拒绝整份文件且不创建人员；通过表头校验后按物理行号逐行处理。每个成功行的账号、人员资料、学生初始分类（学生）和年度资格在一个独立事务提交；同一文件其他行失败不回滚已成功行。每行返回行号、学号/工号、状态、错误码/说明、人员 ID、资格 ID 和首次创建的登录标识/临时凭证。导入源文件以随机存储键写入 Web 根目录外私有目录，并在 `managed_file` 保存文件摘要；历史导入行不保存密码或临时凭证明文。重复上传的同幂等键返回原任务和行状态，所有凭证字段为空。
 
 ## 6. 错误码目录（技术基线）
 
@@ -391,4 +496,4 @@ Content-Type: application/json
 | 不同批量操作间的排序 | 不同操作不引入全局候选人排序/FIFO 排队；数据库行锁保证名额不超额，竞争最后名额时先取得行锁并成功提交的操作获得。 | 已确认（TODO-51） |
 | 错误码和消息 | 错误码用稳定字符串大写下划线格式，HTTP 状态表达大类，客户端按 code 分支；`message` 使用简明中文展示，字段错误单独返回。内部异常只进日志，不泄露 SQL/堆栈。 | 已确认 |
 
-`TODO-50` 至 `TODO-52` 已按业务方确认结果写入登记表及规则文档。本版本的端点路径与请求/响应字段是已确认实施契约；页面按此细化按钮可用条件、字段、确认提示、错误展示和分页行为。实现阶段补充 OpenAPI 文档与接口级验收测试，并验证目标部署环境要求。本 API 定稿不构成生产部署批准。
+`TODO-50` 至 `TODO-56` 已按业务方确认结果写入登记表及规则文档。本版本的端点路径与请求/响应字段是已确认实施契约；页面按此细化按钮可用条件、字段、确认提示、错误展示和分页行为。实现阶段补充 OpenAPI 文档与接口级验收测试，并验证目标部署环境要求。本 API 定稿不构成生产部署批准。

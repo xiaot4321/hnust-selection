@@ -4,8 +4,8 @@ import cn.hnust.selection.common.Result;
 import cn.hnust.selection.enums.AdminAuthorizationStatusFilter;
 import cn.hnust.selection.request.GrantAdminAuthorizationRequest;
 import cn.hnust.selection.request.RevokeAdminAuthorizationRequest;
-import cn.hnust.selection.response.AdminAccountAuthorizationResponse;
-import cn.hnust.selection.response.AdminAuthorizationCommandResponse;
+import cn.hnust.selection.vo.AdminAccountAuthorizationVO;
+import cn.hnust.selection.vo.AdminAuthorizationCommandVO;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AdminAccountAuthorizationService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -53,7 +53,7 @@ public class AdminAccountAuthorizationController {
      * @return 授权字段与历史状态，不包含密码、临时凭证或人员资料
      */
     @GetMapping("/{targetAccountId}/authorizations")
-    public Result<List<AdminAccountAuthorizationResponse>> listAuthorizations(
+    public Result<List<AdminAccountAuthorizationVO>> listAuthorizations(
         @PathVariable("targetAccountId") @Positive Long targetAccountId,
         @RequestParam("collegeId") @Positive Long collegeId,
         @RequestParam(defaultValue = "ACTIVE") AdminAuthorizationStatusFilter status,
@@ -72,7 +72,7 @@ public class AdminAccountAuthorizationController {
      * @return 授权行 ID 与 GRANTED 结果码
      */
     @PostMapping("/{targetAccountId}/authorizations")
-    public Result<AdminAuthorizationCommandResponse> grant(
+    public Result<AdminAuthorizationCommandVO> grant(
         @PathVariable("targetAccountId") @Positive Long targetAccountId,
         @Valid @RequestBody GrantAdminAuthorizationRequest request,
         @RequestHeader("Idempotency-Key") String idempotencyKey,
@@ -91,7 +91,7 @@ public class AdminAccountAuthorizationController {
      * @return 授权行 ID 与 REVOKED 结果码
      */
     @PostMapping("/{targetAccountId}/authorizations/{authorizationId}/revoke")
-    public Result<AdminAuthorizationCommandResponse> revoke(
+    public Result<AdminAuthorizationCommandVO> revoke(
         @PathVariable("targetAccountId") @Positive Long targetAccountId,
         @PathVariable("authorizationId") @Positive Long authorizationId,
         @Valid @RequestBody RevokeAdminAuthorizationRequest request,

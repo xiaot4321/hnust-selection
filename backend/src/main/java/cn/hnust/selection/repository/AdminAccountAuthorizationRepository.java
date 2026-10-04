@@ -1,5 +1,7 @@
 package cn.hnust.selection.repository;
 
+import cn.hnust.selection.entity.AdminAuthorizationEntity;
+import cn.hnust.selection.entity.AdminAuthorizationOperationEntity;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -45,7 +47,7 @@ public class AdminAccountAuthorizationRepository {
     }
 
     /** 查询指定学院中的授权记录，并按状态筛选；ALL 同时返回有效记录和撤销历史。 */
-    public List<AuthorizationRecord> findAuthorizations(Long accountId, Long collegeId, String status) {
+    public List<AdminAuthorizationEntity> findAuthorizations(Long accountId, Long collegeId, String status) {
         StringBuilder sql = new StringBuilder(AUTHORIZATION_SELECT)
             .append("WHERE authorization.account_id = ? AND authorization.college_id = ? ");
         if ("ACTIVE".equals(status)) {
@@ -64,7 +66,7 @@ public class AdminAccountAuthorizationRepository {
      * <p>把目标账号 ID 放进 WHERE 子句，可避免调用者把另一个管理员的授权 ID 拼到路径中，
      * 从而误撤销不属于该账号的记录。</p>
      */
-    public Optional<AuthorizationRecord> findAuthorizationForUpdate(Long accountId, Long authorizationId) {
+    public Optional<AdminAuthorizationEntity> findAuthorizationForUpdate(Long accountId, Long authorizationId) {
         try {
             return Optional.of(jdbcTemplate.queryForObject(
                 AUTHORIZATION_SELECT + "WHERE authorization.account_id = ? AND authorization.id = ? FOR UPDATE",
@@ -138,23 +140,24 @@ public class AdminAccountAuthorizationRepository {
     }
 
     /** 查询指定幂等命令；审计对象 ID 用来重放稳定的命令回执。 */
-    public Optional<ExistingOperation> findOperation(Long actorAccountId, String actionCode,
-                                                     String requestId) {
+    public Optional<AdminAuthorizationOperationEntity> findOperation(Long actorAccountId, String actionCode,
+                                                                     String requestId) {
         String sql = "SELECT operation.request_fingerprint, operation.result_code, audit.object_id " +
             "FROM business_operation operation LEFT JOIN audit_event audit " +
             "ON audit.business_operation_id = operation.id AND audit.action_code = operation.action_code " +
             "WHERE operation.actor_account_id = ? AND operation.action_code = ? " +
             "AND operation.request_id = ? ORDER BY audit.id LIMIT 1";
-        List<ExistingOperation> operations = jdbcTemplate.query(sql, new RowMapper<ExistingOperation>() {
+        List<AdminAuthorizationOperationEntity> operations = jdbcTemplate.query(
+            sql, new RowMapper<AdminAuthorizationOperationEntity>() {
             @Override
-            public ExistingOperation mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+            public AdminAuthorizationOperationEntity mapRow(ResultSet resultSet, int rowNum) throws SQLException {
                 long rawObjectId = resultSet.getLong("object_id");
                 Long authorizationId = resultSet.wasNull() ? null : rawObjectId;
-                return new ExistingOperation(resultSet.getString("request_fingerprint"),
+                return new AdminAuthorizationOperationEntity(resultSet.getString("request_fingerprint"),
                     resultSet.getString("result_code"), authorizationId);
             }
         }, actorAccountId, actionCode, requestId);
-        return operations.isEmpty() ? Optional.<ExistingOperation>empty()
+        return operations.isEmpty() ? Optional.<AdminAuthorizationOperationEntity>empty()
             : Optional.of(operations.get(0));
     }
 
@@ -223,7 +226,7 @@ public class AdminAccountAuthorizationRepository {
     }
 
     /** 授予成功后读取本事务刚创建的完整记录，作为 API 响应及审计快照来源。 */
-    public Optional<AuthorizationRecord> findAuthorizationById(Long authorizationId) {
+    public Optional<AdminAuthorizationEntity> findAuthorizationById(Long authorizationId) {
         try {
             return Optional.of(jdbcTemplate.queryForObject(
                 AUTHORIZATION_SELECT + "WHERE authorization.id = ?",
@@ -233,14 +236,15 @@ public class AdminAccountAuthorizationRepository {
         }
     }
 
-    private final RowMapper<AuthorizationRecord> authorizationRowMapper = new RowMapper<AuthorizationRecord>() {
+    private final RowMapper<AdminAuthorizationEntity> authorizationRowMapper =
+        new RowMapper<AdminAuthorizationEntity>() {
         @Override
-        public AuthorizationRecord mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+        public AdminAuthorizationEntity mapRow(ResultSet resultSet, int rowNum) throws SQLException {
             long rawBatchId = resultSet.getLong("batch_id");
             Long batchId = resultSet.wasNull() ? null : rawBatchId;
             long rawRevokedBy = resultSet.getLong("revoked_by");
             Long revokedBy = resultSet.wasNull() ? null : rawRevokedBy;
-            return new AuthorizationRecord(resultSet.getLong("id"), resultSet.getLong("account_id"),
+            return new AdminAuthorizationEntity(resultSet.getLong("id"), resultSet.getLong("account_id"),
                 resultSet.getLong("college_id"), batchId, resultSet.getString("capability_code"),
                 resultSet.getString("authority_slot"), resultSet.getString("basis"),
                 resultSet.getLong("granted_by"), resultSet.getTimestamp("granted_at"),
@@ -259,68 +263,5 @@ public class AdminAccountAuthorizationRepository {
         return Long.valueOf(key.longValue());
     }
 
-    /** 只读映射出的授权历史数据；status 通过撤销时间推导，不重复存成另一份状态。 */
-    public static class AuthorizationRecord {
-        private final Long id;
-        private final Long accountId;
-        private final Long collegeId;
-        private final Long batchId;
-        private final String capabilityCode;
-        private final String authoritySlot;
-        private final String basis;
-        private final Long grantedBy;
-        private final Timestamp grantedAt;
-        private final Long revokedBy;
-        private final Timestamp revokedAt;
-        private final String revocationReason;
 
-        public AuthorizationRecord(Long id, Long accountId, Long collegeId, Long batchId,
-                                   String capabilityCode, String authoritySlot, String basis,
-                                   Long grantedBy, Timestamp grantedAt, Long revokedBy, Timestamp revokedAt,
-                                   String revocationReason) {
-            this.id = id;
-            this.accountId = accountId;
-            this.collegeId = collegeId;
-            this.batchId = batchId;
-            this.capabilityCode = capabilityCode;
-            this.authoritySlot = authoritySlot;
-            this.basis = basis;
-            this.grantedBy = grantedBy;
-            this.grantedAt = grantedAt;
-            this.revokedBy = revokedBy;
-            this.revokedAt = revokedAt;
-            this.revocationReason = revocationReason;
-        }
-
-        public Long getId() { return id; }
-        public Long getAccountId() { return accountId; }
-        public Long getCollegeId() { return collegeId; }
-        public Long getBatchId() { return batchId; }
-        public String getCapabilityCode() { return capabilityCode; }
-        public String getAuthoritySlot() { return authoritySlot; }
-        public String getBasis() { return basis; }
-        public Long getGrantedBy() { return grantedBy; }
-        public Timestamp getGrantedAt() { return grantedAt == null ? null : new Timestamp(grantedAt.getTime()); }
-        public Long getRevokedBy() { return revokedBy; }
-        public Timestamp getRevokedAt() { return revokedAt == null ? null : new Timestamp(revokedAt.getTime()); }
-        public String getRevocationReason() { return revocationReason; }
-        public boolean isRevoked() { return revokedAt != null; }
-    }
-
-    /** 已提交的幂等操作摘要及其对应授权 ID。 */
-    public static class ExistingOperation {
-        private final String fingerprint;
-        private final String resultCode;
-        private final Long authorizationId;
-
-        public ExistingOperation(String fingerprint, String resultCode, Long authorizationId) {
-            this.fingerprint = fingerprint;
-            this.resultCode = resultCode;
-            this.authorizationId = authorizationId;
-        }
-
-        public String getFingerprint() { return fingerprint; }
-        public String getResultCode() { return resultCode; }
-        public Long getAuthorizationId() { return authorizationId; }
-    }
 }
