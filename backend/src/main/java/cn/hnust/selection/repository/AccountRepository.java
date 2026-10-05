@@ -168,7 +168,7 @@ public class AccountRepository {
         // 只读取最近 20 条签发记录以限制哈希比对成本；forUpdate=true 会锁定这些凭证行，
         // 应与账号行锁在同一事务中使用，不能在事务外借此声称具备并发保护。
         String sql = "SELECT id, credential_hash, used_at, revoked_at, " +
-            "(expires_at > UTC_TIMESTAMP(3)) AS not_expired FROM temporary_credential " +
+            "(expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3)) AS not_expired FROM temporary_credential " +
             "WHERE account_id = ? ORDER BY issued_at DESC, id DESC LIMIT 20" +
             (forUpdate ? " FOR UPDATE" : "");
         return jdbcTemplate.query(sql, new RowMapper<TemporaryCredentialEntity>() {
@@ -181,12 +181,12 @@ public class AccountRepository {
     }
 
     public List<TemporaryCredentialEntity> findValidTemporaryCredentials(Long accountId) {
-        // 登录只需要验证当前可用的临时凭证，因此由 SQL 排除已用、已撤销、已过期记录，
-        // 减少对无效 BCrypt 哈希的昂贵比较。not_expired 列对返回记录固定为 true，供通用对象映射。
+        // 登录只需要验证当前可用的临时凭证，因此由 SQL 排除已用、已撤销或仍保留历史到期时间且已过期的记录，
+        // 减少对无效 BCrypt 哈希的昂贵比较。expires_at 为 NULL 表示不设到期时间。
         return jdbcTemplate.query(
             "SELECT id, credential_hash, used_at, revoked_at, TRUE AS not_expired " +
                 "FROM temporary_credential WHERE account_id = ? AND used_at IS NULL " +
-                "AND revoked_at IS NULL AND expires_at > UTC_TIMESTAMP(3) " +
+                "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3)) " +
                 "ORDER BY issued_at DESC, id DESC LIMIT 20",
             new RowMapper<TemporaryCredentialEntity>() {
                 @Override public TemporaryCredentialEntity mapRow(ResultSet rs, int rowNum) throws SQLException {
@@ -198,10 +198,11 @@ public class AccountRepository {
 
     public boolean consumeTemporaryCredential(Long credentialId) {
         // 用一条条件 UPDATE 原子完成“仍可用 -> 已消费”状态变化，而不是先查再写。
-        // 返回 true 代表恰好更新一行；返回 false 表示凭证已被并发请求消费、撤销或到期。
+        // 返回 true 代表恰好更新一行；返回 false 表示凭证已被并发请求消费、撤销或仍处于历史到期状态。
         return jdbcTemplate.update(
             "UPDATE temporary_credential SET used_at = UTC_TIMESTAMP(3) " +
-                "WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > UTC_TIMESTAMP(3)",
+                "WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL " +
+                "AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3))",
             credentialId) == 1;
     }
 

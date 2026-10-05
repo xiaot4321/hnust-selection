@@ -1,9 +1,9 @@
 # 师生互选系统物理数据库设计与数据字典
 
-> 版本：0.5（业务方确认定稿）  
-> 状态：业务方于 2026-10-02 确认按当前内容定案，目标为 MySQL 5.7.36；本机 MySQL 服务版本已查询为 `5.7.36-log`。初始 DDL 已应用到本机验证库，核验 49 张表和 151 个外键。0.5 版已与 API UTC 时间基线对齐；初始 DDL 见 [schema.sql](../sql/mysql57/schema.sql)。本定案不构成其他或生产环境部署批准。  
-> 更新日期：2026-10-02  
-> 基线：[总体需求](../requirements.md) 0.20、[逻辑数据模型](logical-data-model.md) 0.7、[待确认事项登记表](todo-register.md) 第 6 节。时间存储约定沿用 [API 设计](api-design.md) 0.4 的 UTC 约定。
+> 版本：0.8（管理员异步导出任务）
+> 状态：原始 0.5 DDL 已应用到本机 MySQL 5.7.36-log 验证库，核验 49 张表和 151 个外键；0.6 增补学院人员导入业务操作关联、导师导入行引用及年度资格唯一当前槽位。对应向前迁移脚本为 [20261003_personnel_management_v1.sql](../sql/mysql57/migrations/20261003_personnel_management_v1.sql)，0.7 完整建库脚本含 50 张表和 158 个外键。2026-10-03 本机首次迁移的结构变更已应用；随后通过 [迁移恢复脚本](../sql/mysql57/migrations/20261003_personnel_management_v1_recovery.sql) 成功写入总管理员学院业务授权和对应审计记录各一条。0.7 将临时凭证到期时间改为可空，`NULL` 表示不设到期时间；本机验证库已于 2026-10-05 执行向前迁移，50 张表和 158 个外键保持不变。0.8 在完整建库 DDL 中增加 `admin_export_job` 表，并提供 [管理员导出任务迁移](../sql/mysql57/migrations/20261005_admin_export_jobs_v1.sql)；该迁移已于 2026-10-05 在本机验证库应用，迁移前备份为 `%TEMP%\hnust_selection_before_admin_export_jobs_20261005_175530.sql`。当前核验为 51 张表和 160 个外键。其他或生产环境执行迁移前须备份并核对回滚方案；本机升级不构成生产部署批准。
+> 更新日期：2026-10-05
+> 基线：[总体需求](../requirements.md) 0.27、[逻辑数据模型](logical-data-model.md) 0.10、[待确认事项登记表](todo-register.md) 3.3 第 6 节。时间存储约定沿用 [API 设计](api-design.md) 1.5 的 UTC 约定。
 
 ## 1. 范围与设计原则
 
@@ -72,6 +72,7 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | E34 SiteNotice | `site_notice` | E35 NoticeRecipient | `notice_recipient` |
 | E36 DeliveryAttempt | `delivery_attempt` | E37 DataAccessRecord | `data_access_record` |
 | E38 AuditEvent | `audit_event` | E39 ApplicationProfileSnapshot | `application_profile_snapshot` |
+| E45 AdminExportJob | `admin_export_job` |  |  |
 | 并发唯一性辅助 | `batch_running_slot` | 并发唯一性辅助 | `student_year_match_slot` |
 | 并发唯一性辅助 | `student_pending_supplement_slot` |  |  |
 | 冻结范围唯一指针 | `teacher_application_scope_slot` |  |  |
@@ -90,12 +91,13 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | `major` | `college_id BIGINT`, `major_code VARCHAR(32)`, `name VARCHAR(128)`, `is_active BOOLEAN`, `valid_from DATE NULL`, `valid_to DATE NULL`, `change_basis TEXT NULL` | `FK(college_id)`、`UNIQUE(college_id, major_code)`；专业停用/更名不删除旧引用。 |
 | `account` | `login_identifier VARCHAR(128)`, `role_code VARCHAR(16)`, `account_status VARCHAR(16)`, `password_hash VARCHAR(255) NULL`, `must_change_password BOOLEAN`, `credential_changed_at DATETIME(3) NULL`, `last_login_at DATETIME(3) NULL` | `UNIQUE(login_identifier)` 全系统唯一；跨角色重号导入报错，不自动合并身份。密码仅存安全哈希。 |
 | `account_authorization` | `account_id BIGINT`, `college_id BIGINT`, `batch_id BIGINT NULL`, `capability_code VARCHAR(48)`, `authority_slot VARCHAR(48) NULL`, `basis TEXT`, `granted_by BIGINT`, `granted_at DATETIME(3)`, `revoked_by BIGINT NULL`, `revoked_at DATETIME(3) NULL` | FK 至账号/学院/批次/操作者；授权范围及撤销时间留史。`authority_slot` 用唯一约束保证 `ADMIN_ACCOUNT_MANAGER` 仅一项当前授权（撤销时清空槽位或追加新授权行）。 |
-| `temporary_credential` | `account_id BIGINT`, `credential_hash VARCHAR(255)`, `issued_at DATETIME(3)`, `expires_at DATETIME(3)`, `shown_at DATETIME(3) NULL`, `used_at DATETIME(3) NULL`, `revoked_at DATETIME(3) NULL`, `issued_operation_id BIGINT` | FK 至账号/业务操作；仅保存哈希；有效期 72 小时、一次性使用和展示，不可读回明文。 |
+| `temporary_credential` | `account_id BIGINT`, `credential_hash VARCHAR(255)`, `issued_at DATETIME(3)`, `expires_at DATETIME(3) NULL`, `shown_at DATETIME(3) NULL`, `used_at DATETIME(3) NULL`, `revoked_at DATETIME(3) NULL`, `issued_operation_id BIGINT` | FK 至账号/业务操作；仅保存哈希；`expires_at=NULL` 表示凭证不设到期时间；成功使用一次或撤销后失效，不可读回明文。 |
 | `student` | `account_id BIGINT`, `student_no VARCHAR(64)`, `full_name VARCHAR(128)`, `college_id BIGINT`, `major_id BIGINT`, `degree_type VARCHAR(32)`, `classification_version INTEGER`, `enrollment_year_code VARCHAR(16)`, `graduation_date DATE NULL`, `graduation_date_basis TEXT NULL`, `graduation_date_confirmed_at DATETIME(3) NULL` | `UNIQUE(student_no)`, `UNIQUE(account_id)`；FK 至学院/专业/账号。毕业日期未确认时附件不自动清理。 |
 | `teacher` | `account_id BIGINT`, `employee_no VARCHAR(64)`, `full_name VARCHAR(128)`, `college_id BIGINT`, `current_public_profile_version_id BIGINT NULL` | `UNIQUE(employee_no)`, `UNIQUE(account_id)`；公开资料当前指针须属于该导师。 |
 | `student_profile_version` | `student_id BIGINT`, `version_no INTEGER`, `biography TEXT NULL`, `contact_text VARCHAR(255) NULL`, `resume_file_id BIGINT NULL`, `changed_by BIGINT`, `changed_at DATETIME(3)` | `UNIQUE(student_id, version_no)`；FK 至学生、文件、账号；历史版本不可覆盖。 |
 | `teacher_public_profile_version` | `teacher_id BIGINT`, `version_no INTEGER`, `research_directions TEXT NULL`, `biography TEXT NULL`, `review_status VARCHAR(24)`, `submitted_at DATETIME(3)`, `reviewed_by BIGINT NULL`, `reviewed_at DATETIME(3) NULL`, `review_comment TEXT NULL`, `published_at DATETIME(3) NULL` | `UNIQUE(teacher_id, version_no)`；公开目录只读审核通过版本。 |
-| `annual_eligibility` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_status VARCHAR(24)`, `evidence_type VARCHAR(32)`, `evidence_reference TEXT NULL`, `source_name VARCHAR(128) NULL`, `valid_from DATETIME(3) NULL`, `valid_to DATETIME(3) NULL`, `changed_by BIGINT` | FK 至学年/学院/学生/导师；服务端校验 `student_id` 与 `teacher_id` 恰有一个非空；唯一当前资格的实现结合资格历史设计核定。 |
+| `annual_eligibility` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_status VARCHAR(24)`, `evidence_type VARCHAR(32)`, `evidence_reference TEXT NULL`, `source_name VARCHAR(128) NULL`, `valid_from DATETIME(3) NULL`, `valid_to DATETIME(3) NULL`, `changed_by BIGINT` | FK 至学年/学院/学生/导师；服务端校验 `student_id` 与 `teacher_id` 恰有一个非空；变更追加历史行，旧当前行设置 `valid_to`。状态值为 `ELIGIBLE`/`INELIGIBLE`。 |
+| `annual_eligibility_slot` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_id BIGINT`, `claimed_at DATETIME(3)` | 当前资格投影；`UNIQUE(academic_year_id, student_id)`、`UNIQUE(academic_year_id, teacher_id)`、`UNIQUE(eligibility_id)` 保证每人每学年最多一条当前资格；学生/导师引用恰有一个非空由 Service 校验，人员行锁串行化修改。 |
 | `student_classification_revision` | `student_id BIGINT`, `version_no INTEGER`, `from_major_id BIGINT NULL`, `to_major_id BIGINT`, `from_degree_type VARCHAR(32) NULL`, `to_degree_type VARCHAR(32)`, `basis TEXT`, `reason TEXT`, `changed_by BIGINT`, `changed_at DATETIME(3)`, `correction_request_id BIGINT NULL` | `UNIQUE(student_id, version_no)`；前值可空表示初次导入；受影响批次、志愿与关系处置通过 `student_classification_impact` 逐条关联。 |
 | `student_classification_impact` | `revision_id BIGINT`, `impact_no INTEGER`, `batch_id BIGINT`, `impact_type VARCHAR(32)`, `preference_submission_id BIGINT NULL`, `relation_adjustment_id BIGINT NULL`, `occurred_at DATETIME(3)` | `UNIQUE(revision_id, impact_no)`；以明细关系保存身份纠错波及的批次、志愿和关系处置，不把业务 ID 拼成字符串。 |
 | `student_identity_correction_request` | `student_id BIGINT`, `submitted_at DATETIME(3)`, `current_classification_version INTEGER`, `requested_major_id BIGINT NULL`, `requested_degree_type VARCHAR(32) NULL`, `student_explanation TEXT`, `request_status VARCHAR(24)`, `handled_by BIGINT NULL`, `handled_at DATETIME(3) NULL`, `handling_comment TEXT NULL`, `resulting_revision_id BIGINT NULL` | FK 至学生/专业/操作者/分类版本；状态与实际身份修改分开保存，申请不自动更新学生身份。 |
@@ -147,12 +149,13 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 
 | 表 | 字段及类型 | 主键、唯一键和说明 |
 |---|---|---|
-| `personnel_import` | `actor_account_id BIGINT`, `college_id BIGINT`, `academic_year_id BIGINT NULL`, `person_type VARCHAR(16)`, `template_version VARCHAR(32)`, `source_file_id BIGINT`, `import_status VARCHAR(24)`, `submitted_at DATETIME(3)`, `completed_at DATETIME(3) NULL`, `accepted_count INTEGER`, `rejected_count INTEGER`, `error_report_file_id BIGINT NULL` | 导入批次独立于互选批次；源文件/报告按运维留存策略保护。 |
-| `personnel_import_row` | `import_id BIGINT`, `row_number INTEGER`, `person_identifier VARCHAR(64)`, `row_status VARCHAR(24)`, `error_code VARCHAR(40) NULL`, `error_message TEXT NULL`, `person_id BIGINT NULL`, `eligibility_id BIGINT NULL` | `UNIQUE(import_id, row_number)`；不保存密码或无关成绩/联系方式副本。 |
+| `personnel_import` | `actor_account_id BIGINT`, `college_id BIGINT`, `academic_year_id BIGINT NULL`, `person_type VARCHAR(16)`, `template_version VARCHAR(32)`, `source_file_id BIGINT`, `business_operation_id BIGINT`, `import_status VARCHAR(24)`, `submitted_at DATETIME(3)`, `completed_at DATETIME(3) NULL`, `accepted_count INTEGER`, `rejected_count INTEGER`, `error_report_file_id BIGINT NULL` | `UNIQUE(business_operation_id)`；导入批次独立于互选批次；源文件在 Web 根目录外私有存储，历史状态和逐行结果可审计。 |
+| `personnel_import_row` | `import_id BIGINT`, `row_number INTEGER`, `person_identifier VARCHAR(64)`, `row_status VARCHAR(24)`, `error_code VARCHAR(40) NULL`, `error_message TEXT NULL`, `person_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_id BIGINT NULL` | `UNIQUE(import_id, row_number)`；学生写 `person_id`、导师写 `teacher_id`，每行仅一个人员引用；不保存密码或无关成绩/联系方式副本。 |
 | `site_notice` | `sender_account_id BIGINT NULL`, `scope_college_id BIGINT NULL`, `batch_id BIGINT NULL`, `notice_type VARCHAR(32)`, `title VARCHAR(200)`, `body TEXT`, `source_operation_id BIGINT NULL`, `created_at DATETIME(3)`, `visible_at DATETIME(3) NULL` | 站内通知；结果类消息按业务披露时点安排。 |
 | `notice_recipient` | `notice_id BIGINT`, `account_id BIGINT`, `recipient_status VARCHAR(16)`, `delivered_at DATETIME(3) NULL`, `read_at DATETIME(3) NULL` | `UNIQUE(notice_id, account_id)`；服务端计算并校验接收范围。 |
 | `delivery_attempt` | `recipient_id BIGINT`, `attempt_no INTEGER`, `attempted_at DATETIME(3)`, `attempt_status VARCHAR(16)`, `failure_code VARCHAR(40) NULL`, `failure_detail TEXT NULL`, `retry_after DATETIME(3) NULL` | `UNIQUE(recipient_id, attempt_no)`；重试不创建重复业务通知或重复匹配。 |
 | `data_access_record` | `account_id BIGINT`, `action_code VARCHAR(32)`, `college_id BIGINT NULL`, `batch_id BIGINT NULL`, `object_type VARCHAR(24)`, `object_id BIGINT NULL`, `field_set TEXT`, `authorization_basis TEXT`, `accessed_at DATETIME(3)`, `result_file_id BIGINT NULL`, `accessed_file_id BIGINT NULL` | 简历查看、联系方式查看、名单/结果/简历导出分别留痕；导出文件受控。 |
+| `admin_export_job` | `batch_id BIGINT`, `requester_account_id BIGINT`, `export_type VARCHAR(24)`, `export_status VARCHAR(16)`, `request_id VARCHAR(128)`, `request_fingerprint VARCHAR(128)`, `storage_key VARCHAR(512) NULL`, `original_filename VARCHAR(255) NULL`, `file_size_bytes BIGINT NULL`, `row_count INTEGER NULL`, `error_code VARCHAR(40) NULL`, `created_at DATETIME(3)`, `completed_at DATETIME(3) NULL`, `expires_at DATETIME(3)` | `UNIQUE(requester_account_id, request_id)`；固定统计/匹配结果 CSV 模板；文件在私有存储，24 小时过期；创建和下载访问另写 `data_access_record`。 |
 | `audit_event` | `actor_account_id BIGINT NULL`, `actor_kind VARCHAR(16)`, `actor_role VARCHAR(16) NULL`, `scope_basis TEXT NULL`, `object_type VARCHAR(32)`, `object_id BIGINT`, `action_code VARCHAR(48)`, `before_values_text TEXT NULL`, `after_values_text TEXT NULL`, `reason TEXT NULL`, `approval_comment TEXT NULL`, `occurred_at DATETIME(3)`, `business_operation_id BIGINT NULL` | 追加式；通用对象引用无 FK；不记录密码、临时凭证明文、简历内容或无关敏感字段。 |
 
 ## 4. 关键唯一约束与索引
@@ -167,6 +170,7 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | `preference_submission(batch_student_id, version_no)` UNIQUE；`preference_item(submission_id, preference_order)` UNIQUE；`preference_item(submission_id, batch_teacher_quota_id)` UNIQUE | 保留多个完整版本，同时禁止版本内重复顺位/导师。 |
 | `round_application(preference_item_id)` UNIQUE；`application_profile_snapshot(round_application_id, execution_cycle)` UNIQUE（非空常规申请侧） | 一个锁定志愿项对应唯一当前常规申请，每处理周期快照可追溯。 |
 | `student_year_match_slot(student_id, academic_year_id)` PK | 跨批次同学年有效关系唯一；槽位与 `matching_relation`、名额余额同事务维护。 |
+| `admin_export_job(requester_account_id, request_id)` UNIQUE；`(batch_id, export_status, created_at)`；`(expires_at, storage_key)` | 导出请求幂等、按批次/状态检索和过期文件清理；批次及请求管理员外键保护。 |
 | `student_pending_supplement_slot(student_id)` PK | 并发下同一学生至多一条待处理补选申请。 |
 | `teacher_application_scope_version(batch_id, teacher_id, version_no)` UNIQUE；`teacher_allowed_major(scope_version_id, major_id)` UNIQUE | 范围版本和专业项稳定且不重复。 |
 | `teacher_application_scope_slot(batch_id, teacher_id)` PK | 每批次/导师仅一个冻结范围版本；常规轮次、重开与补选引用同一冻结版本。 |

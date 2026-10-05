@@ -22,7 +22,7 @@ export interface PageResult<T> {
 // 只描述系统业务角色；管理员的数据范围通过 authorizations 单独表达。
 export type AccountRole = 'STUDENT' | 'TEACHER' | 'ADMIN'
 /** 服务端允许总管理员授予普通管理员的学院/批次级能力目录。 */
-export type AdminCapability = 'COLLEGE_ADMIN' | 'BATCH_AUDIT'
+export type AdminCapability = 'COLLEGE_ADMIN' | 'BATCH_MANAGER' | 'BATCH_AUDIT'
 
 // /auth/me 中一条仍有效的管理员能力授权，不包含授权依据、签发人或撤销历史。
 export interface AuthAuthorization {
@@ -46,7 +46,7 @@ export type AdminAuthorizationStatus = 'ACTIVE' | 'REVOKED' | 'ALL'
 
 /** 当前授权目录中可以创建的业务能力及其学院/可选批次范围。 */
 export interface GrantAdminAuthorizationPayload {
-  /** 当前 API 版本只开放已登记的 BATCH_AUDIT 能力。 */
+  /** 普通管理员业务能力代码；不含保留的 ADMIN_ACCOUNT_MANAGER。 */
   capabilityCode: AdminCapability
   /** 由总管理员选定并经服务端范围校验的学院主键。 */
   collegeId: number
@@ -100,8 +100,8 @@ export interface AdminAccountCredentialResult {
   result: 'CREATED' | 'RESET'
   /** 首次完成响应中的一次性凭证；幂等重放时为 null。 */
   temporaryCredential: string | null
-  /** 临时凭证到期时刻，ISO-8601 UTC。 */
-  expiresAt: string
+  /** 兼容字段；当前凭证不设到期时间，因此通常为 null。 */
+  expiresAt: string | null
   /** true 表示当前响应正在作本次唯一展示。 */
   credentialShownNow: boolean
 }

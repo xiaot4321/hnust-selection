@@ -34,7 +34,7 @@ function readCookie(name: string): string | undefined {
  * 发送一个符合项目 API 约定的请求，并返回统一 Result<T> 信封里的 data。
  *
  * <p>调用方只需要传路径和标准 Fetch 参数；本函数统一设置 JSON 请求头、服务端 Session Cookie、
- * CSRF 请求头，并把非 2xx JSON 响应转换成 ApiError。若请求成功，调用方拿到的是业务 data，
+ * CSRF 请求头，并把异常响应转换成 ApiError。若请求成功，调用方拿到的是业务 data，
  * 而不是完整的 { code, message, data } 外层对象。</p>
  *
  * @param path 相对于 API 根路径的端点路径，例如 /auth/me
@@ -58,15 +58,47 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     if (csrfToken) headers.set('X-XSRF-TOKEN', csrfToken)
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...init,
-    method,
-    headers,
-    // 允许浏览器自动附带服务端 Session Cookie；前端不读取 Cookie 中的 Session ID，也不自行存储它。
-    credentials: 'include',
-  })
-  // API 契约要求成功和失败响应都是 JSON Result 信封；若后端返回非 JSON，解析错误会作为普通异常抛出。
-  const result = (await response.json()) as ApiResult<T>
+  let response: Response
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      method,
+      headers,
+      // 允许浏览器自动附带服务端 Session Cookie；前端不读取 Cookie 中的 Session ID，也不自行存储它。
+      credentials: 'include',
+    })
+  } catch (error) {
+    // 网络断开、代理无法连接后端时，浏览器只会提供通用的 “Failed to fetch” 信息。
+    if (error instanceof TypeError) {
+      throw new ApiError('NETWORK_ERROR', '无法连接服务，请确认前端代理和后端服务已启动。', 0, null)
+    }
+    throw error
+  }
+  // 先读取文本，才能区分空响应、无效 JSON 和有效的 API 错误信封；直接调用 response.json()
+  // 会把空响应变成浏览器原生异常，页面只能显示难以理解的 “Unexpected end of JSON input”。
+  const responseText = await response.text()
+  let result: ApiResult<T>
+  try {
+    if (!responseText.trim()) throw new Error('empty response')
+    const parsed: unknown = JSON.parse(responseText)
+    if (
+      typeof parsed !== 'object' || parsed === null
+      || typeof (parsed as Partial<ApiResult<T>>).code !== 'string'
+      || typeof (parsed as Partial<ApiResult<T>>).message !== 'string'
+      || !('data' in parsed)
+    ) {
+      throw new Error('invalid response envelope')
+    }
+    result = parsed as ApiResult<T>
+  } catch {
+    // 代理错误页或后端启动失败时通常返回空内容、HTML 或不完整 JSON，不把原文透给用户。
+    throw new ApiError(
+      'INVALID_RESPONSE',
+      `服务端没有返回有效的 API 数据（HTTP ${response.status}）。请检查登录状态、后端服务和前端代理配置。`,
+      response.status,
+      null,
+    )
+  }
 
   if (!response.ok) {
     // 不吞掉 HTTP 状态：页面根据业务 code 显示更具体的提示，未知 code 仍可显示后端 message。

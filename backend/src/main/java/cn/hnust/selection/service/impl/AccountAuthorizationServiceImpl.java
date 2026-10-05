@@ -16,7 +16,8 @@ import org.springframework.stereotype.Service;
  * <p>普通 ADMIN 只是允许进入管理员 API 的粗粒度角色，仍须在 account_authorization 中拥有所需能力，
  * 且请求目标学院和批次必须落在授权范围内。持有保留能力 ADMIN_ACCOUNT_MANAGER 的总管理员
  * 自动拥有全部已登记管理员能力和全系统范围；它仍须通过领域 Service 执行业务状态和对象校验。
- * COLLEGE_ADMIN 是学院级人员、专业和年度资格管理能力；BATCH_AUDIT 仍可按学院或单个批次缩小范围。</p>
+ * COLLEGE_ADMIN 是学院级人员、专业和年度资格管理能力；BATCH_MANAGER 与 BATCH_AUDIT
+ * 可按学院或单个批次缩小范围。</p>
  *
  * <p>Bean 名称固定为 {@code accountAuthorization}，可供 Spring Security 的方法表达式调用。
  * 管理员业务 Service 应传入目标数据真实所属的学院和批次，不能只用不带范围的重载保护数据操作。</p>

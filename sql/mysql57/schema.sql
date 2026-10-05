@@ -1,5 +1,5 @@
 -- HNNUST faculty-student selection system: MySQL 5.7.36 bootstrap DDL
--- Generated from docs/database-design.md v0.4 (49 tables).
+-- Generated from docs/database-design.md v0.7 (50 tables).
 -- Fresh schema only. This script does not DROP existing databases, tables, or data.
 -- Assumptions for first execution: schema hnust_selection; utf8mb4_unicode_ci.
 -- Review identifier case/collation and the FK list before applying to production.
@@ -94,7 +94,7 @@ CREATE TABLE `temporary_credential` (
   `account_id` BIGINT NOT NULL,
   `credential_hash` VARCHAR(255) NOT NULL,
   `issued_at` DATETIME(3) NOT NULL,
-  `expires_at` DATETIME(3) NOT NULL,
+  `expires_at` DATETIME(3) NULL,
   `shown_at` DATETIME(3) NULL,
   `used_at` DATETIME(3) NULL,
   `revoked_at` DATETIME(3) NULL,
@@ -205,6 +205,22 @@ CREATE TABLE `annual_eligibility` (
   KEY `ix_annual_eligibility_student_id` (`student_id`),
   KEY `ix_annual_eligibility_teacher_id` (`teacher_id`),
   KEY `ix_annual_eligibility_changed_by` (`changed_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
+
+-- The slot points to the one current history row; all prior qualification rows remain append-only history.
+-- Exactly one of student_id / teacher_id is enforced by the Service for MySQL 5.7 compatibility.
+CREATE TABLE `annual_eligibility_slot` (
+  `academic_year_id` BIGINT NOT NULL,
+  `college_id` BIGINT NOT NULL,
+  `student_id` BIGINT NULL,
+  `teacher_id` BIGINT NULL,
+  `eligibility_id` BIGINT NOT NULL,
+  `claimed_at` DATETIME(3) NOT NULL,
+  PRIMARY KEY (`academic_year_id`, `eligibility_id`),
+  UNIQUE KEY `uq_annual_eligibility_slot_year_student` (`academic_year_id`, `student_id`),
+  UNIQUE KEY `uq_annual_eligibility_slot_year_teacher` (`academic_year_id`, `teacher_id`),
+  UNIQUE KEY `uq_annual_eligibility_slot_eligibility_id` (`eligibility_id`),
+  KEY `ix_annual_eligibility_slot_college_id` (`college_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
 CREATE TABLE `student_classification_revision` (
@@ -824,6 +840,7 @@ CREATE TABLE `personnel_import` (
   `person_type` VARCHAR(16) NOT NULL,
   `template_version` VARCHAR(32) NOT NULL,
   `source_file_id` BIGINT NOT NULL,
+  `business_operation_id` BIGINT NOT NULL,
   `import_status` VARCHAR(24) NOT NULL,
   `submitted_at` DATETIME(3) NOT NULL,
   `completed_at` DATETIME(3) NULL,
@@ -838,7 +855,8 @@ CREATE TABLE `personnel_import` (
   KEY `ix_personnel_import_college_id` (`college_id`),
   KEY `ix_personnel_import_academic_year_id` (`academic_year_id`),
   KEY `ix_personnel_import_source_file_id` (`source_file_id`),
-  KEY `ix_personnel_import_error_report_file_id` (`error_report_file_id`)
+  KEY `ix_personnel_import_error_report_file_id` (`error_report_file_id`),
+  UNIQUE KEY `uq_personnel_import_business_operation_id` (`business_operation_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
 CREATE TABLE `personnel_import_row` (
@@ -850,6 +868,7 @@ CREATE TABLE `personnel_import_row` (
   `error_code` VARCHAR(40) NULL,
   `error_message` TEXT NULL,
   `person_id` BIGINT NULL,
+  `teacher_id` BIGINT NULL,
   `eligibility_id` BIGINT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -857,6 +876,7 @@ CREATE TABLE `personnel_import_row` (
   PRIMARY KEY (`id`),
   KEY `ix_personnel_import_row_import_id` (`import_id`),
   KEY `ix_personnel_import_row_person_id` (`person_id`),
+  KEY `ix_personnel_import_row_teacher_id` (`teacher_id`),
   KEY `ix_personnel_import_row_eligibility_id` (`eligibility_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
@@ -931,6 +951,32 @@ CREATE TABLE `data_access_record` (
   KEY `ix_data_access_record_accessed_file_id` (`accessed_file_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
+CREATE TABLE `admin_export_job` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `batch_id` BIGINT NOT NULL,
+  `requester_account_id` BIGINT NOT NULL,
+  `export_type` VARCHAR(24) NOT NULL,
+  `export_status` VARCHAR(16) NOT NULL,
+  `request_id` VARCHAR(128) NOT NULL,
+  `request_fingerprint` VARCHAR(128) NOT NULL,
+  `storage_key` VARCHAR(512) NULL,
+  `original_filename` VARCHAR(255) NULL,
+  `file_size_bytes` BIGINT NULL,
+  `row_count` INTEGER NULL,
+  `error_code` VARCHAR(40) NULL,
+  `created_at` DATETIME(3) NOT NULL,
+  `completed_at` DATETIME(3) NULL,
+  `expires_at` DATETIME(3) NOT NULL,
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `row_version` BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_export_actor_request` (`requester_account_id`, `request_id`),
+  KEY `ix_admin_export_batch_status_created` (`batch_id`, `export_status`, `created_at`),
+  KEY `ix_admin_export_expiry` (`expires_at`, `storage_key`),
+  CONSTRAINT `fk_admin_export_job_batch` FOREIGN KEY (`batch_id`) REFERENCES `selection_batch` (`id`),
+  CONSTRAINT `fk_admin_export_job_requester` FOREIGN KEY (`requester_account_id`) REFERENCES `account` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
+
 CREATE TABLE `audit_event` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `actor_account_id` BIGINT NULL,
@@ -978,6 +1024,11 @@ ALTER TABLE `annual_eligibility` ADD CONSTRAINT `fk_annual_eligibility_college_i
 ALTER TABLE `annual_eligibility` ADD CONSTRAINT `fk_annual_eligibility_student_id` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `annual_eligibility` ADD CONSTRAINT `fk_annual_eligibility_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `annual_eligibility` ADD CONSTRAINT `fk_annual_eligibility_changed_by` FOREIGN KEY (`changed_by`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `annual_eligibility_slot` ADD CONSTRAINT `fk_annual_eligibility_slot_academic_year_id` FOREIGN KEY (`academic_year_id`) REFERENCES `academic_year` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `annual_eligibility_slot` ADD CONSTRAINT `fk_annual_eligibility_slot_college_id` FOREIGN KEY (`college_id`) REFERENCES `college` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `annual_eligibility_slot` ADD CONSTRAINT `fk_annual_eligibility_slot_student_id` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `annual_eligibility_slot` ADD CONSTRAINT `fk_annual_eligibility_slot_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `annual_eligibility_slot` ADD CONSTRAINT `fk_annual_eligibility_slot_eligibility_id` FOREIGN KEY (`eligibility_id`) REFERENCES `annual_eligibility` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `student_classification_revision` ADD CONSTRAINT `fk_student_classification_revision_student_id` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `student_classification_revision` ADD CONSTRAINT `fk_student_classification_revision_from_major_id` FOREIGN KEY (`from_major_id`) REFERENCES `major` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `student_classification_revision` ADD CONSTRAINT `fk_student_classification_revision_to_major_id` FOREIGN KEY (`to_major_id`) REFERENCES `major` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
@@ -1088,8 +1139,10 @@ ALTER TABLE `personnel_import` ADD CONSTRAINT `fk_personnel_import_college_id` F
 ALTER TABLE `personnel_import` ADD CONSTRAINT `fk_personnel_import_academic_year_id` FOREIGN KEY (`academic_year_id`) REFERENCES `academic_year` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `personnel_import` ADD CONSTRAINT `fk_personnel_import_source_file_id` FOREIGN KEY (`source_file_id`) REFERENCES `managed_file` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `personnel_import` ADD CONSTRAINT `fk_personnel_import_error_report_file_id` FOREIGN KEY (`error_report_file_id`) REFERENCES `managed_file` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `personnel_import` ADD CONSTRAINT `fk_personnel_import_business_operation_id` FOREIGN KEY (`business_operation_id`) REFERENCES `business_operation` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `personnel_import_row` ADD CONSTRAINT `fk_personnel_import_row_import_id` FOREIGN KEY (`import_id`) REFERENCES `personnel_import` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `personnel_import_row` ADD CONSTRAINT `fk_personnel_import_row_person_id` FOREIGN KEY (`person_id`) REFERENCES `student` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `personnel_import_row` ADD CONSTRAINT `fk_personnel_import_row_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `personnel_import_row` ADD CONSTRAINT `fk_personnel_import_row_eligibility_id` FOREIGN KEY (`eligibility_id`) REFERENCES `annual_eligibility` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `site_notice` ADD CONSTRAINT `fk_site_notice_sender_account_id` FOREIGN KEY (`sender_account_id`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `site_notice` ADD CONSTRAINT `fk_site_notice_scope_college_id` FOREIGN KEY (`scope_college_id`) REFERENCES `college` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;

@@ -44,7 +44,7 @@ public class AccountAuthServiceImpl implements AccountAuthService {
     /**
      * 验证正式密码或首次登录使用的一次性临时凭证，并生成不含密码的 Security 主体。
      *
-     * <p>正式密码只在账号不处于“必须改密”状态时有效；临时凭证只在未使用、未撤销、未过期，
+     * <p>正式密码只在账号不处于“必须改密”状态时有效；临时凭证只在未使用、未撤销且仍有效时，
      * 且账号要求改密时有效。账号不存在和密码错误统一返回凭证错误，避免泄露账号是否存在。</p>
      *
      * @param loginIdentifier 学号、工号或管理员登录标识
@@ -167,13 +167,13 @@ public class AccountAuthServiceImpl implements AccountAuthService {
                 }
             }
             if (matched == null) {
-                throw new ApiException("TEMP_CREDENTIAL_EXPIRED", "临时凭证已过期或无效", HttpStatus.UNAUTHORIZED);
+                throw new ApiException("TEMP_CREDENTIAL_EXPIRED", "临时凭证无效或已撤销", HttpStatus.UNAUTHORIZED);
             }
             if (matched.isUsed()) {
                 throw new ApiException("TEMP_CREDENTIAL_ALREADY_USED", "临时凭证已使用", HttpStatus.CONFLICT);
             }
             if (matched.isRevoked() || !matched.isNotExpired()) {
-                throw new ApiException("TEMP_CREDENTIAL_EXPIRED", "临时凭证已过期或无效", HttpStatus.UNAUTHORIZED);
+                throw new ApiException("TEMP_CREDENTIAL_EXPIRED", "临时凭证无效或已撤销", HttpStatus.UNAUTHORIZED);
             }
             if (!accountRepository.consumeTemporaryCredential(matched.getId())) {
                 // 即使前面已加锁，SQL 仍通过未使用/未撤销/未过期条件做原子保护。

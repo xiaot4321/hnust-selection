@@ -98,13 +98,39 @@ class AdminAccountAuthorizationServiceTest {
     @Test
     void rejectsUnregisteredCapabilityCodesInsteadOfCreatingNewPermissions() {
         prepareActor(true);
-        GrantAdminAuthorizationRequest request = grantRequest("BATCH_MANAGER", COLLEGE_ID, null, "授权依据");
+        GrantAdminAuthorizationRequest request = grantRequest("NOT_A_REGISTERED_CAPABILITY", COLLEGE_ID, null, "授权依据");
 
         ApiException exception = assertThrows(ApiException.class,
             () -> service.grant(superAdmin, TARGET_ID, request, GRANT_KEY));
 
         assertEquals("INVALID_ARGUMENT", exception.getCode());
         verify(authorizationRepository, never()).insertAuthorization(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void grantsTheRegisteredBatchManagerCapability() {
+        prepareActor(true);
+        prepareTargetForUpdate(targetAdminRecord);
+        when(authorizationRepository.collegeExists(COLLEGE_ID)).thenReturn(true);
+        when(authorizationRepository.hasActiveAuthorization(TARGET_ID, "BATCH_MANAGER", COLLEGE_ID, null))
+            .thenReturn(false);
+        when(authorizationRepository.findOperation(ACTOR_ID, "ADMIN_AUTHORIZATION_GRANT", GRANT_KEY))
+            .thenReturn(Optional.empty());
+        when(authorizationRepository.insertOperation(eq(ACTOR_ID), eq("ADMIN_AUTHORIZATION_GRANT"),
+            eq(COLLEGE_ID), eq(null), eq(GRANT_KEY), any(String.class))).thenReturn(54L);
+        when(authorizationRepository.insertAuthorization(TARGET_ID, COLLEGE_ID, null,
+            "BATCH_MANAGER", "批次管理岗位授权", ACTOR_ID)).thenReturn(84L);
+        when(authorizationRepository.findAuthorizationById(84L)).thenReturn(Optional.of(
+            record(84L, TARGET_ID, COLLEGE_ID, null, "BATCH_MANAGER", "批次管理岗位授权", ACTOR_ID, null)));
+
+        AdminAuthorizationCommandVO response = service.grant(superAdmin, TARGET_ID,
+            grantRequest("BATCH_MANAGER", COLLEGE_ID, null, "批次管理岗位授权"), GRANT_KEY);
+
+        assertEquals(84L, response.getAuthorizationId());
+        assertEquals("GRANTED", response.getResult());
+        verify(authorizationRepository).insertAuthorization(TARGET_ID, COLLEGE_ID, null,
+            "BATCH_MANAGER", "批次管理岗位授权", ACTOR_ID);
+        verify(authorizationRepository).completeOperation(54L);
     }
 
     @Test

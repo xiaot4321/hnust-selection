@@ -11,7 +11,7 @@ import javax.validation.constraints.Positive;
  * 目标角色和时间由服务端校验/生成。学院范围必须显式提供，批次范围可以省略表示学院级范围。</p>
  */
 public class GrantAdminAuthorizationRequest {
-    /** 受服务端能力目录约束的业务能力代码，例如当前目录中的 BATCH_AUDIT。 */
+    /** 受服务端能力目录约束的业务能力代码，例如 BATCH_MANAGER 或 BATCH_AUDIT。 */
     @NotBlank
     private String capabilityCode;
 
