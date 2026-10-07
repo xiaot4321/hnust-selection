@@ -7,6 +7,7 @@ import BatchManagementPanel from '../components/admin/BatchManagementPanel.vue'
 import AdminGovernancePanel from '../components/admin/AdminGovernancePanel.vue'
 import TeacherWorkspace from '../components/teacher/TeacherWorkspace.vue'
 import StudentWorkspace from '../components/student/StudentWorkspace.vue'
+import ForgotPasswordPanel from '../components/auth/ForgotPasswordPanel.vue'
 import { ApiError, request } from '../api/http'
 import type { AccountRole as AuthRole, AuthSession, AuthUser, CollegeOption, PasswordChangeResult } from '../types/api'
 
@@ -20,6 +21,7 @@ const loading = ref(true)
 const submitting = ref(false)
 // 控制登录后的改密表单是否展开。
 const passwordChangeOpen = ref(false)
+const forgotPasswordOpen = ref(false)
 // 创建管理员或从目录中选择后，把账号编号同步到授权面板。
 const authorizationTargetAccountId = ref('')
 // 总管理员跨学院授权时，从服务端读取可用学院清单供选择器展示。
@@ -466,6 +468,7 @@ onMounted(loadSession)
           </section>
 
           <!-- 未登录时显示表单；表单只收集凭证，角色由服务端账号记录决定。 -->
+          <ForgotPasswordPanel v-else-if="forgotPasswordOpen" @close="forgotPasswordOpen = false" />
           <section v-else class="auth-card login-card" aria-labelledby="login-title">
             <div class="card-kicker">校园统一服务入口</div>
             <h2 id="login-title">欢迎登录</h2>
@@ -481,6 +484,7 @@ onMounted(loadSession)
                 <span aria-hidden="true">→</span>
               </button>
             </form>
+            <button class="text-button" type="button" :disabled="submitting" @click="forgotPasswordOpen = true; loginForm.password = ''">忘记密码？通过邮箱找回</button>
             <p class="help-line">无法登录？请联系所在学院管理员核对账号状态。</p>
           </section>
         </section>

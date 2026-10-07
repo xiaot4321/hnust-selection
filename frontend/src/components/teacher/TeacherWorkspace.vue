@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmailSecurityPanel from '../auth/EmailSecurityPanel.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
 import TeacherApplicationScopePanel from './TeacherApplicationScopePanel.vue'
@@ -237,6 +238,7 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
 
 <template>
   <div class="teacher-workspace">
+    <EmailSecurityPanel />
     <header class="teacher-dashboard-header">
       <div>
         <p class="teacher-eyebrow">TEACHER WORKSPACE</p>

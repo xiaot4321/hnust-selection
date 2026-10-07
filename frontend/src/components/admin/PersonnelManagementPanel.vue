@@ -5,11 +5,9 @@ import {
   personnelManagementService,
   type AcademicYearOption,
   type CollegeOption,
-  type CreatedPerson,
   type EligibilityRecord,
   type ImportResult,
   type MajorRecord,
-  type PersonRecord,
 } from '../../services/personnelManagementService'
 
 /** 父页面只按会话授权控制入口显示；每个 API 仍由服务端复核真实权限和学院归属。 */

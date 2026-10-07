@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
+import EmailSecurityPanel from '../auth/EmailSecurityPanel.vue'
 import type { AuthUser } from '../../types/api'
 import type {
   CorrectionStatus, DegreeType, IdentityCorrectionRequest, MatchStatus, PreferenceItem,
@@ -462,6 +463,7 @@ onMounted(() => { void initialize() })
 </script>
 <template>
   <section class="student-workspace" aria-labelledby="student-workspace-title">
+    <EmailSecurityPanel />
     <header class="student-heading">
       <div>
         <p class="student-kicker">学生服务</p>
@@ -1407,4 +1409,3 @@ onMounted(() => { void initialize() })
   }
 }
 </style>
-

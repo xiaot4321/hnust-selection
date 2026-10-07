@@ -24,6 +24,11 @@ const directoryError = ref('')
 const directoryPage = ref<PageResult<AdminAccountDirectoryItem> | null>(null)
 const directoryPageNo = ref(1)
 
+function selectCredential(event: FocusEvent): void {
+  const input = event.target
+  if (input instanceof HTMLInputElement) input.select()
+}
+
 function positiveId(value: string): number | null {
   if (!/^\d+$/.test(value.trim())) return null
   const parsed = Number(value)
@@ -252,7 +257,7 @@ async function resetCredential(): Promise<void> {
       <p class="credential-account">{{ result.loginIdentifier }}</p>
       <template v-if="result.temporaryCredential && result.credentialShownNow">
         <label class="credential-label" for="issued-admin-credential">一次性临时凭证</label>
-        <input id="issued-admin-credential" :value="result.temporaryCredential" readonly @focus="$event.target instanceof HTMLInputElement && $event.target.select()" />
+        <input id="issued-admin-credential" :value="result.temporaryCredential" readonly @focus="selectCredential" />
         <p class="credential-expiry">不设到期时间 · 首次登录后必须设置正式密码。</p>
         <p class="credential-warning">请立即复制并线下转达。关闭或刷新页面后无法找回明文；如未保存，请重新执行重置。</p>
       </template>

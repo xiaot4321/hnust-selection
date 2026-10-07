@@ -121,6 +121,7 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
                 // 规则按从具体到宽泛的顺序配置。公开入口仅包括健康检查与登录；写请求仍受 CSRF 保护。
                 .antMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                 .antMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                .antMatchers(HttpMethod.POST, "/api/auth/recovery/code", "/api/auth/recovery/reset").permitAll()
                 .antMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                 .antMatchers(HttpMethod.POST, "/api/auth/logout", "/api/auth/password-change").authenticated()
                 .antMatchers("/api/admin/admin-accounts", "/api/admin/admin-accounts/**")
