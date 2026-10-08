@@ -447,7 +447,7 @@ onMounted(loadSession)
             </div>
             <div v-if="canViewBatches" id="batch-management" class="management-area">
               <!-- BATCH_AUDIT 只展示批次与统计；任何写请求仍由后端检查 BATCH_MANAGER。 -->
-              <BatchManagementPanel :can-manage="canManageBatches" />
+              <BatchManagementPanel :can-manage="canManageBatches" :can-manage-personnel="canManagePersonnel" />
             </div>
             <div v-if="canUseAdminGovernance" class="management-area">
               <AdminGovernancePanel :can-review-personnel="canManagePersonnel" :can-manage-batches="canManageBatches" />

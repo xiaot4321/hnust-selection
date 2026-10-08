@@ -75,6 +75,9 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         }
         if (!repository.lockTeacher(teacherId, actor.getAccountId())) throw notFound("导师资料不存在");
         TeacherProfileVO current = repository.findProfile(teacherId).orElseThrow(() -> notFound("导师资料不存在"));
+        if ("PENDING_REVIEW".equals(current.getReviewStatus())) {
+            throw new ApiException("PROFILE_ALREADY_SUBMITTED", "你已经提交审核，无需再次提交。", HttpStatus.CONFLICT);
+        }
         if (!current.getEtag().equals(ifMatch.trim())) {
             throw new ApiException("PRECONDITION_FAILED", "资料已更新，请重新读取后再保存", HttpStatus.PRECONDITION_FAILED);
         }

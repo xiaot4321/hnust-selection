@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import StudentCohortEligibilityPanel from './StudentCohortEligibilityPanel.vue'
 import { ApiError } from '../../api/http'
 import {
   personnelManagementService,
@@ -21,6 +22,7 @@ const years = ref<AcademicYearOption[]>([])
 const collegeId = ref<number | null>(null)
 const loading = ref(false)
 const saving = ref(false)
+const cohortBusy = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const students = ref<PersonRecord[]>([])
@@ -39,7 +41,7 @@ let loadingCount = 0
 let collegeDataRequestId = 0
 let studentListRequestId = 0
 let teacherListRequestId = 0
-const peopleType = ref<'STUDENT' | 'TEACHER'>('STUDENT')
+const peopleType = ref<'STUDENT'>('STUDENT')
 const eligibilityYearId = ref<number | null>(null)
 const showEligibilityHistory = ref(false)
 const importLookupId = ref('')
@@ -388,7 +390,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
       </div>
       <label class="college-picker">
         <span>授权学院</span>
-        <select v-model.number="collegeId" :disabled="loading || colleges.length < 2" aria-label="选择授权学院">
+        <select v-model.number="collegeId" :disabled="loading || saving || cohortBusy || colleges.length < 2" aria-label="选择授权学院">
           <option v-for="college in colleges" :key="college.id" :value="college.id">{{ college.name }}</option>
         </select>
       </label>
@@ -403,9 +405,9 @@ async function changePeoplePage(pageNo: number): Promise<void> {
       <nav class="personnel-tabs" aria-label="人员管理功能">
         <button v-for="tab in [
           { id: 'students', label: '学生账号' }, { id: 'teachers', label: '导师账号' },
-          { id: 'majors', label: '专业目录' }, { id: 'eligibility', label: '年度资格' }, { id: 'imports', label: '名单导入' },
+          { id: 'majors', label: '专业目录' }, { id: 'eligibility', label: '学生资格' }, { id: 'imports', label: '名单导入' },
         ]" :key="tab.id" type="button" :aria-current="activeTab === tab.id ? 'page' : undefined"
-          :class="{ 'personnel-tab-active': activeTab === tab.id }" @click="activeTab = tab.id as Tab; resetMessages()">
+          :class="{ 'personnel-tab-active': activeTab === tab.id }" :disabled="cohortBusy" @click="activeTab = tab.id as Tab; resetMessages()">
           {{ tab.label }}
         </button>
       </nav>
@@ -466,13 +468,14 @@ async function changePeoplePage(pageNo: number): Promise<void> {
       </div>
 
       <div v-else-if="activeTab === 'eligibility'" class="personnel-section">
-        <h4>维护年度资格</h4>
+        <StudentCohortEligibilityPanel v-if="collegeId !== null" :college-id="collegeId" :years="years" @busy="cohortBusy = $event" @changed="loadEligibility" />
+        <fieldset :disabled="cohortBusy" class="student-eligibility-adjustment"><h4>单个学生资格调整</h4>
         <p class="personnel-help">每人每学年仅保留一条当前状态。再次修改会新增历史版本，原记录会带上失效时间。</p>
         <div class="personnel-form">
           <label>学年<select v-model.number="eligibilityYearId"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>
-          <label>人员类型<select v-model="peopleType"><option value="STUDENT">学生</option><option value="TEACHER">导师</option></select></label>
-          <label>学号或工号<input v-model="eligibilityIdentifier" placeholder="输入完整编号" /></label>
-          <button class="personnel-secondary lookup-button" type="button" :disabled="loading" @click="lookupEligibilityPerson">{{ loading ? '查询中…' : '查找人员' }}</button>
+          <p>仅用于学生；导师资格请到“批次与导师名额”设置。</p>
+          <label>学号<input v-model="eligibilityIdentifier" placeholder="输入完整学号" /></label>
+          <button class="personnel-secondary lookup-button" type="button" :disabled="loading" @click="lookupEligibilityPerson">{{ loading ? '查询中…' : '查找学生' }}</button>
           <label>资格状态<select v-model="eligibilityForm.status"><option value="ELIGIBLE">具备资格</option><option value="INELIGIBLE">不具备资格</option></select></label>
           <label>资格依据类型<input v-model="eligibilityForm.evidenceType" maxlength="32" placeholder="例如 ROSTER_IMPORT" required /></label>
           <label class="wide-field">资格依据说明<textarea v-model="eligibilityForm.evidenceReference" rows="2" placeholder="审批编号或名单来源说明" /></label>
@@ -486,6 +489,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
           <tr v-for="row in eligibilityRows" :key="row.id"><td>{{ row.yearCode }}</td><td>{{ row.personName }} · {{ row.personType === 'STUDENT' ? '学生' : '导师' }}</td><td>{{ row.personIdentifier }}</td><td>{{ row.status === 'ELIGIBLE' ? '具备资格' : '不具备资格' }}</td><td>{{ row.evidenceType }}<small v-if="row.evidenceReference">{{ row.evidenceReference }}</small></td><td>{{ row.validFrom ?? '—' }}<br/><small>{{ row.validTo ? `至 ${row.validTo}` : '当前有效' }}</small></td></tr>
           <tr v-if="!eligibilityRows.length"><td colspan="6" class="table-empty">当前筛选条件下没有资格记录。</td></tr>
         </tbody></table></div>
+        </fieldset>
       </div>
 
       <div v-else class="personnel-section">
@@ -552,6 +556,7 @@ export default { components: { CredentialNotice, PersonTable } }
 </script>
 
 <style scoped>
+.student-eligibility-adjustment { border: 0; padding: 0; margin: 0; min-width: 0; }
 .personnel-panel { margin-top: 0; padding: 0 0 4px; color: var(--hnust-ink); }
 .personnel-heading { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; padding-bottom:14px; border-bottom:1px solid var(--hnust-line); }
 .personnel-kicker { display:inline-flex; align-items:center; gap:7px; margin:0 0 7px; padding:4px 8px; border:1px solid #cfe0e6; border-radius:999px; background:#eaf2f5; color:var(--hnust-blue-dark); font-size:10px; font-weight:700; }
@@ -607,3 +612,5 @@ export default { components: { CredentialNotice, PersonTable } }
 .credential-cell { max-width:240px; color:#4f705e!important; font-family:ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
 @media(max-width:720px) { .personnel-heading { align-items:stretch; flex-direction:column; } .college-picker { min-width:0; } .personnel-form { grid-template-columns:1fr; } .personnel-form .wide-field { grid-column:auto; } .personnel-list-heading { align-items:stretch; flex-direction:column; } .personnel-list-heading input { width:100%; } .personnel-pagination { align-items:flex-start; flex-direction:column; } }
 </style>
+
+

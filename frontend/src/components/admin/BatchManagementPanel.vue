@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
+import TeacherAllocationPanel from './TeacherAllocationPanel.vue'
 import {
   selectionBatchService,
   type AcademicYearOption,
@@ -13,7 +14,7 @@ import {
   type SupplementTeacher,
 } from '../../services/selectionBatchService'
 
-const props = defineProps<{ canManage: boolean }>()
+const props = defineProps<{ canManage: boolean; canManagePersonnel?: boolean }>()
 
 // 目录与当前选择分别保存：学院变化会重载学年/批次，批次变化会重载详情和导师名额。
 const colleges = ref<BatchCollegeOption[]>([])
@@ -24,6 +25,7 @@ const selectedBatchId = ref<number | null>(null)
 const detail = ref<BatchDetail | null>(null)
 const quotas = ref<TeacherQuota[]>([])
 const statistics = ref<BatchStatistics | null>(null)
+const hasTeacherDirectoryAccess = ref(false)
 const supplementTeachers = ref<SupplementTeacher[]>([])
 const supplementTeacherIds = ref<number[]>([])
 const quotaDrafts = reactive<Record<number, string>>({})
@@ -49,6 +51,53 @@ const stageOrder = ['FILLING', 'ROUND_1', 'ROUND_2', 'ROUND_3', 'SUPPLEMENT']
 const visibleStages = computed(() => stageOrder.filter((code) => code !== 'SUPPLEMENT' || selectedBatch.value?.supplementPlanned))
 const stageNames: Record<string, string> = {
   FILLING: '学生填报', ROUND_1: '第一轮处理', ROUND_2: '第二轮处理', ROUND_3: '第三轮处理', SUPPLEMENT: '补选窗口',
+}
+const currentTime = ref(Date.now())
+const timeRefresh = window.setInterval(() => { currentTime.value = Date.now() }, 1000)
+onUnmounted(() => window.clearInterval(timeRefresh))
+const earliestNewTime = computed(() => toLocalInput(new Date(Math.ceil(currentTime.value / 60000) * 60000).toISOString()))
+const scheduleErrors = computed(() => {
+  const errors: Record<string, { start?: string; end?: string }> = {}
+  visibleStages.value.forEach((stage, index) => {
+    const current = schedule[stage]
+    const previousStage = visibleStages.value[index - 1]
+    const previous = previousStage ? schedule[previousStage] : undefined
+    const start = current?.start ? new Date(`${current.start}+08:00`).getTime() : null
+    const end = current?.end ? new Date(`${current.end}+08:00`).getTime() : null
+    const previousEnd = previous?.end ? new Date(`${previous.end}+08:00`).getTime() : null
+    const error: { start?: string; end?: string } = {}
+    if (selectedBatch.value?.status === 'DRAFT') {
+      if (start !== null && start < currentTime.value) error.start = '开始时间不能早于当前时间，请选择未来时间。'
+      if (end !== null && end < currentTime.value) error.end = '结束时间不能早于当前时间。'
+    }
+    if (start !== null && !Number.isFinite(start)) error.start = '请填写有效的开始时间。'
+    if (end !== null && !Number.isFinite(end)) error.end = '请填写有效的结束时间。'
+    if (start !== null && end !== null && end <= start) error.end = '结束时间必须晚于开始时间，不能相等。'
+    if (start !== null && previousEnd !== null && start < previousEnd) {
+      error.start = `开始时间不能早于${stageNames[previousStage]}的结束时间。`
+    }
+    errors[stage] = error
+  })
+  return errors
+})
+const hasScheduleErrors = computed(() => Object.values(scheduleErrors.value).some((error) => error.start || error.end))
+const scheduleComplete = computed(() => visibleStages.value.every((stage) => schedule[stage]?.start && schedule[stage]?.end))
+const scheduleSaved = computed(() => visibleStages.value.every((code) => {
+  const stored = detail.value?.stages.find((stage) => stage.stageCode === code)
+  return stored && schedule[code]?.start === toLocalInput(stored.plannedStartAt)
+    && schedule[code]?.end === toLocalInput(stored.plannedEndAt)
+}))
+function minimumStageTime(stage: string, field: 'start' | 'end'): string | undefined {
+  if (selectedBatch.value?.status !== 'DRAFT') return undefined
+  const index = visibleStages.value.indexOf(stage)
+  const previousEnd = schedule[visibleStages.value[index - 1]]?.end
+  const ownStart = schedule[stage]?.start
+  const related = field === 'start' ? previousEnd : ownStart
+  if (!related) return earliestNewTime.value
+  const milliseconds = new Date(`${related}+08:00`).getTime() + (field === 'end' ? 60000 : 0)
+  if (!Number.isFinite(milliseconds)) return earliestNewTime.value
+  const relatedMinimum = toLocalInput(new Date(milliseconds).toISOString())
+  return relatedMinimum > earliestNewTime.value ? relatedMinimum : earliestNewTime.value
 }
 const statusNames: Record<string, string> = {
   DRAFT: '草稿', SCHEDULED: '已发布', ACTIVE: '运行中', PAUSED: '已暂停', COMPLETED: '已完成', ARCHIVED: '已归档', CANCELLED: '已取消',
@@ -141,7 +190,24 @@ async function loadSelectedBatch(): Promise<void> {
   finally { loading.value = false }
 }
 
-/** 创建草稿后刷新目录并重新载入新批次，保证界面使用服务端返回的版本号。 */
+/** 刷新导师设置所需的批次、名额和统计，保留尚未保存的排期输入。 */
+async function refreshTeacherSetup(): Promise<void> {
+  const batchId = selectedBatchId.value
+  const collegeId = selectedCollegeId.value
+  if (!batchId) return
+  loading.value = true
+  try {
+    const [fresh, rows, stats] = await Promise.all([
+      selectionBatchService.batch(batchId), selectionBatchService.quotas(batchId), selectionBatchService.statistics(batchId),
+    ])
+    if (selectedBatchId.value !== batchId || selectedCollegeId.value !== collegeId) return
+    detail.value = fresh; quotas.value = rows; statistics.value = stats
+    for (const row of rows) quotaDrafts[row.teacherId] = row.quotaLimit === null ? '' : String(row.quotaLimit)
+  } catch (error) {
+    if (selectedBatchId.value === batchId && selectedCollegeId.value === collegeId) errorMessage.value = friendlyError(error)
+  } finally { if (selectedBatchId.value === batchId && selectedCollegeId.value === collegeId) loading.value = false }
+}
+
 async function createBatch(): Promise<void> {
   if (!selectedCollegeId.value || !createForm.academicYearId) return
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
@@ -180,6 +246,16 @@ async function saveMetadata(): Promise<void> {
  */
 async function saveSchedule(): Promise<void> {
   if (!selectedBatch.value) return
+  if (hasScheduleErrors.value) {
+    errorMessage.value = '请先修正阶段时间旁的提示，再保存排期。'
+    successMessage.value = ''
+    return
+  }
+  if (visibleStages.value.some((stage) => !schedule[stage]?.start || !schedule[stage]?.end)) {
+    errorMessage.value = '请补全所有阶段的开始时间和结束时间。'
+    successMessage.value = ''
+    return
+  }
   const stages = visibleStages.value.map((stageCode) => ({
     stageCode,
     plannedStartAt: toUtc(schedule[stageCode]?.start ?? ''),
@@ -199,6 +275,11 @@ async function saveSchedule(): Promise<void> {
 /** 批次状态命令带幂等键；完成后重读目录、状态和阶段，界面始终以服务端结果为准。 */
 async function runLifecycle(action: 'publish' | 'start' | 'pause' | 'resume' | 'cancel' | 'archive' | 'unarchive'): Promise<void> {
   if (!selectedBatch.value) return
+  if (action === 'publish' && (!scheduleComplete.value || hasScheduleErrors.value || !scheduleSaved.value)) {
+    errorMessage.value = '请先填写有效的未来排期并保存，再发布批次。'
+    successMessage.value = ''
+    return
+  }
   const confirmations: Partial<Record<typeof action, string>> = {
     cancel: '取消此批次后，未匹配学生将结案为未匹配，待处理申请会取消。已锁定关系会保留。确定继续吗？',
     archive: '归档后批次进入只读历史状态。确定归档吗？',
@@ -317,6 +398,12 @@ onMounted(loadColleges)
     </div>
 
     <!-- 只有服务端目录标记为学院级授权时才显示新建表单；后端仍会再次拦截越权请求。 -->
+    <TeacherAllocationPanel v-if="props.canManagePersonnel && selectedBatch && selectedBatch.collegeId === selectedCollegeId"
+      :college-id="selectedBatch.collegeId" :college-name="selectedBatch.collegeName" :batch-id="selectedBatch.id"
+      :batch-name="selectedBatch.name" :academic-year-id="selectedBatch.academicYearId" :year-code="selectedBatch.yearCode"
+      :quotas="quotas" :editable="props.canManage && ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatch.status) && !loading && !saving"
+      @changed="refreshTeacherSetup" @access="hasTeacherDirectoryAccess = $event" />
+
     <form v-if="canCreate" class="batch-create-form" @submit.prevent="createBatch">
       <div class="batch-subheading"><span>新建草稿</span><small>学院和学年决定批次的业务范围</small></div>
       <label>学年
@@ -354,16 +441,23 @@ onMounted(loadColleges)
       <!-- 发布前必须配置完整阶段；发布后服务端仅允许规则限定的时间调整。 -->
       <form class="batch-schedule-form" @submit.prevent="saveSchedule">
         <div class="batch-subheading"><span>阶段时间</span><small>按填报、第一轮、第二轮、第三轮及补选的顺序设置</small></div>
+        <p v-if="selectedBatch.status === 'DRAFT'" class="batch-time-help">请选择当前之后的时间；结束时间必须晚于开始时间。先保存有效排期，再发布批次。</p>
         <div class="batch-schedule-head"><span>阶段</span><span>开始时间</span><span>结束时间</span></div>
         <div v-for="stage in visibleStages" :key="stage" class="batch-schedule-row">
           <strong>{{ stageNames[stage] }}</strong>
-          <input v-model="schedule[stage].start" type="datetime-local" :disabled="!isEditable || saving" required />
-          <input v-model="schedule[stage].end" type="datetime-local" :disabled="!isEditable || saving" required />
+          <div class="batch-time-field">
+            <input v-model="schedule[stage].start" type="datetime-local" :min="minimumStageTime(stage, 'start')" :disabled="!isEditable || saving" :aria-label="`${stageNames[stage]}开始时间`" :aria-invalid="Boolean(scheduleErrors[stage]?.start)" :aria-describedby="scheduleErrors[stage]?.start ? `schedule-${stage}-start-error` : undefined" required />
+            <small v-if="scheduleErrors[stage]?.start" :id="`schedule-${stage}-start-error`" class="batch-time-error" aria-live="polite">{{ scheduleErrors[stage].start }}</small>
+          </div>
+          <div class="batch-time-field">
+            <input v-model="schedule[stage].end" type="datetime-local" :min="minimumStageTime(stage, 'end')" :disabled="!isEditable || saving" :aria-label="`${stageNames[stage]}结束时间`" :aria-invalid="Boolean(scheduleErrors[stage]?.end)" :aria-describedby="scheduleErrors[stage]?.end ? `schedule-${stage}-end-error` : undefined" required />
+            <small v-if="scheduleErrors[stage]?.end" :id="`schedule-${stage}-end-error`" class="batch-time-error" aria-live="polite">{{ scheduleErrors[stage].end }}</small>
+          </div>
         </div>
         <label v-if="isEditable" class="batch-reason">排期变更原因<textarea v-model="editForm.scheduleReason" rows="2" maxlength="4000" placeholder="初次配置可留空；调整已发布排期时请说明原因" /></label>
         <div class="batch-action-row">
-          <button v-if="isEditable" class="secondary-button" type="submit" :disabled="saving">保存完整排期</button>
-          <button v-if="canPublish" class="primary-button batch-action-primary" type="button" :disabled="saving" @click="runLifecycle('publish')">发布批次 <span aria-hidden="true">→</span></button>
+          <button v-if="isEditable" class="secondary-button" type="submit" :disabled="saving || hasScheduleErrors">保存完整排期</button>
+          <button v-if="canPublish" class="primary-button batch-action-primary" type="button" :disabled="saving || !scheduleComplete || hasScheduleErrors || !scheduleSaved" @click="runLifecycle('publish')">发布批次 <span aria-hidden="true">→</span></button>
           <button v-if="canStart" class="primary-button batch-action-primary" type="button" :disabled="saving" @click="runLifecycle('start')">启动批次 <span aria-hidden="true">→</span></button>
           <button v-if="props.canManage && selectedBatch.status === 'ACTIVE'" class="secondary-button" type="button" :disabled="saving" @click="runLifecycle('pause')">暂停批次</button>
           <button v-if="props.canManage && selectedBatch.status === 'PAUSED'" class="primary-button" type="button" :disabled="saving" @click="runLifecycle('resume')">恢复批次</button>
@@ -439,7 +533,7 @@ onMounted(loadColleges)
       </div>
 
       <!-- 名额表展示剩余量和导师范围状态；实际录取时仍由服务端在名额行锁下扣减。 -->
-      <div class="batch-quota-section">
+      <div v-if="!props.canManagePersonnel || !hasTeacherDirectoryAccess" class="batch-quota-section">
         <div class="batch-subheading"><span>导师名额</span><small>只列出本学年资格有效、账号启用且公开资料已发布的导师</small></div>
         <div v-if="!quotas.length" class="batch-empty">当前批次没有符合条件的导师记录。</div>
         <div v-else class="batch-quota-table-wrap">
@@ -516,6 +610,11 @@ onMounted(loadColleges)
 .batch-schedule-row { padding: 8px 10px; border-top: 1px solid #e6ebef; }
 .batch-schedule-row strong { color: #465d73; font-size: .83rem; }
 .batch-schedule-row input { min-height: 39px !important; padding: 7px 9px !important; font-size: .79rem !important; }
+.batch-time-field { display: grid; gap: 5px; min-width: 0; align-self: start; }
+.batch-time-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+.batch-time-field input[aria-invalid="true"] { border-color: #c94343; }
+.batch-time-error { color: #b93636; font-size: .75rem; line-height: 1.5; }
+.batch-time-help { color: #62778b; font-size: .8rem; line-height: 1.6; margin: 8px 10px; }
 .batch-schedule-form>.batch-reason { margin-top: 13px; }
 .batch-action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .batch-action-primary { margin-left: auto; }
@@ -563,3 +662,4 @@ onMounted(loadColleges)
   .batch-schedule-row { grid-template-columns: 1fr; }
 }
 </style>
+

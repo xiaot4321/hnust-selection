@@ -10,11 +10,14 @@ import cn.hnust.selection.repository.AccountRepository;
 import cn.hnust.selection.repository.SelectionBatchRepository;
 import cn.hnust.selection.request.SetTeacherApplicationScopeRequest;
 import cn.hnust.selection.request.SetTeacherQuotaRequest;
+import cn.hnust.selection.request.BatchScheduleRequest;
+import cn.hnust.selection.request.BatchStageScheduleRequest;
 import cn.hnust.selection.security.AccountAuthorization;
 import cn.hnust.selection.security.AccountIdentity;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AccountAuthorizationService;
 import cn.hnust.selection.vo.MajorVO;
+import cn.hnust.selection.vo.BatchStageVO;
 import cn.hnust.selection.vo.TeacherApplicationScopeVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +25,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Optional;
@@ -234,6 +240,80 @@ class SelectionBatchManagementServiceImplTest {
 
         assertEquals("PRECONDITION_FAILED", exception.getCode());
         verify(repository, never()).updateQuota(BATCH_ID, TEACHER_ID, 2L, "eligible", 5);
+    }
+
+    @Test
+    void draftScheduleRejectsPastStartWithoutWriting() {
+        prepareScheduleContext();
+        ApiException exception = assertThrows(ApiException.class,
+            () -> service.saveSchedule(admin, BATCH_ID, scheduleRequest(999L, 2000L), 1L));
+        assertEquals("INVALID_ARGUMENT", exception.getCode());
+        verify(repository, never()).incrementBatchVersion(BATCH_ID);
+    }
+
+    @Test
+    void draftScheduleRejectsEqualStartAndEndWithoutWriting() {
+        prepareScheduleContext();
+        assertThrows(ApiException.class,
+            () -> service.saveSchedule(admin, BATCH_ID, scheduleRequest(2000L, 2000L), 1L));
+        verify(repository, never()).incrementBatchVersion(BATCH_ID);
+    }
+
+    @Test
+    void draftScheduleRejectsReversedWindowWithoutWriting() {
+        prepareScheduleContext();
+        assertThrows(ApiException.class,
+            () -> service.saveSchedule(admin, BATCH_ID, scheduleRequest(2000L, 1500L), 1L));
+        verify(repository, never()).incrementBatchVersion(BATCH_ID);
+    }
+
+    @Test
+    void publishRejectsSavedScheduleThatHasBecomePast() {
+        prepareScheduleContext();
+        when(repository.listStages(BATCH_ID)).thenReturn(storedStages(999L, 2000L));
+        assertThrows(ApiException.class, () -> service.publish(admin, BATCH_ID, QUOTA_KEY));
+        verify(repository, never()).publishStages(BATCH_ID);
+        verify(repository, never()).insertRunningSlot(COLLEGE_ID, YEAR_ID, BATCH_ID);
+    }
+
+    @Test
+    void publishRejectsSavedEqualWindow() {
+        prepareScheduleContext();
+        when(repository.listStages(BATCH_ID)).thenReturn(storedStages(2000L, 2000L));
+        assertThrows(ApiException.class, () -> service.publish(admin, BATCH_ID, QUOTA_KEY));
+        verify(repository, never()).publishStages(BATCH_ID);
+    }
+
+    private void prepareScheduleContext() {
+        prepareAdminContext();
+        when(authorizationService.hasCapability(admin, "BATCH_MANAGER", COLLEGE_ID, BATCH_ID)).thenReturn(true);
+        when(repository.utcNow()).thenReturn(new Timestamp(1000L));
+        when(repository.listStages(BATCH_ID)).thenReturn(Collections.<BatchStageVO>emptyList());
+    }
+
+    private static BatchScheduleRequest scheduleRequest(long firstStart, long firstEnd) {
+        List<BatchStageScheduleRequest> stages = new ArrayList<BatchStageScheduleRequest>();
+        String[] codes = {"FILLING", "ROUND_1", "ROUND_2", "ROUND_3"};
+        for (int i = 0; i < codes.length; i++) {
+            BatchStageScheduleRequest stage = new BatchStageScheduleRequest();
+            stage.setStageCode(codes[i]);
+            stage.setPlannedStartAt(Instant.ofEpochMilli(i == 0 ? firstStart : 3000L + i * 2000L).toString());
+            stage.setPlannedEndAt(Instant.ofEpochMilli(i == 0 ? firstEnd : 4000L + i * 2000L).toString());
+            stages.add(stage);
+        }
+        BatchScheduleRequest request = new BatchScheduleRequest();
+        request.setStages(stages);
+        return request;
+    }
+
+    private static List<BatchStageVO> storedStages(long firstStart, long firstEnd) {
+        List<BatchStageVO> stages = new ArrayList<BatchStageVO>();
+        int order = 0;
+        for (BatchStageScheduleRequest stage : scheduleRequest(firstStart, firstEnd).getStages()) {
+            stages.add(new BatchStageVO((long) ++order, stage.getStageCode(), order, "PLANNED", null,
+                Instant.parse(stage.getPlannedStartAt()), Instant.parse(stage.getPlannedEndAt()), null, null));
+        }
+        return stages;
     }
 
     private void prepareTeacherContext(boolean editOpen) {

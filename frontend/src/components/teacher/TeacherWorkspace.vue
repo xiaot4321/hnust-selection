@@ -191,14 +191,23 @@ async function decideSelectedSupplements(decision: 'ADMIT' | 'NOT_ADMITTED'): Pr
   finally { bulkBusy.value = false }
 }
 async function saveProfile(): Promise<void> {
-  if (!profile.value) return
+  if (!profile.value || savingProfile.value) return
+  if (profile.value.reviewStatus === 'PENDING_REVIEW') {
+    window.alert('你已经提交审核，无需再次提交。')
+    return
+  }
   savingProfile.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
     profile.value = await teacherWorkspaceService.saveProfile(profile.value, { researchDirections: directions.value, biography: biography.value })
     directions.value = profile.value.submittedResearchDirections ?? ''
     biography.value = profile.value.submittedBiography ?? ''
     successMessage.value = '资料已提交管理员审核；审核通过后会显示在学生导师目录。'
-  } catch (error) { errorMessage.value = messageFor(error); await loadProfile() }
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 'PROFILE_ALREADY_SUBMITTED') {
+      window.alert('你已经提交审核，无需再次提交。')
+    } else { errorMessage.value = messageFor(error) }
+    await loadProfile()
+  }
   finally { savingProfile.value = false }
 }
 function toggleNotice(key: string): void {
