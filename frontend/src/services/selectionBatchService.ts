@@ -20,10 +20,6 @@ export interface TeacherQuota {
   quotaLimit: number | null; occupiedCount: number; remainingCount: number; rowVersion: number
   scopeConfigured: boolean; scopeFrozen: boolean
 }
-export interface SupplementTeacher {
-  teacherId: number; employeeNo: string; fullName: string; permitted: boolean; permissionVersion: number | null
-  quotaLimit: number | null; occupiedCount: number; remainingCount: number
-}
 export interface BatchRoundStatistics {
   roundNo: number; stageStatus: string; pendingApplicationCount: number; admittedCount: number
   notAdmittedCount: number; skippedStudentCount: number; cancelledApplicationCount: number
@@ -132,16 +128,6 @@ export const selectionBatchService = {
     const body = json({ newEndAt, reason })
     return mutate(`POST ${path} ${body} v${version}`, path, {
       method: 'POST', headers: { 'If-Match': `"batch-${version}"` }, body,
-    })
-  },
-  supplementTeachers(batchId: number): Promise<SupplementTeacher[]> {
-    return request(`/admin/selection-batches/${batchId}/supplement-teachers`)
-  },
-  setSupplementTeachers(batchId: number, version: number, teacherIds: number[], reason: string): Promise<SupplementTeacher[]> {
-    const path = `/admin/selection-batches/${batchId}/supplement-teachers`
-    const body = json({ teacherIds, reason })
-    return mutate(`PUT ${path} ${body} v${version}`, path, {
-      method: 'PUT', headers: { 'If-Match': `"batch-${version}"` }, body,
     })
   },
   quotas(batchId: number): Promise<TeacherQuota[]> { return request(`/admin/selection-batches/${batchId}/teachers`) },

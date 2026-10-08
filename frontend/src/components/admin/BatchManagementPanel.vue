@@ -10,7 +10,6 @@ import {
   type BatchSummary,
   type BatchStatistics,
   type TeacherQuota,
-  type SupplementTeacher,
 } from '../../services/selectionBatchService'
 
 const props = defineProps<{ canManage: boolean }>()
@@ -24,13 +23,10 @@ const selectedBatchId = ref<number | null>(null)
 const detail = ref<BatchDetail | null>(null)
 const quotas = ref<TeacherQuota[]>([])
 const statistics = ref<BatchStatistics | null>(null)
-const supplementTeachers = ref<SupplementTeacher[]>([])
-const supplementTeacherIds = ref<number[]>([])
 const quotaDrafts = reactive<Record<number, string>>({})
 const schedule = reactive<Record<string, { start: string; end: string }>>({})
 const createForm = reactive({ academicYearId: '', batchCode: '', name: '', supplementPlanned: false, appendReason: '' })
 const editForm = reactive({ name: '', appendReason: '', scheduleReason: '' })
-const supplementReason = ref('')
 const roundExtendNo = ref<number | null>(null)
 const roundNewEnd = ref('')
 const roundExtendReason = ref('')
@@ -41,12 +37,17 @@ const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const lifecycleFeedback = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
 
 // 这些计算值只控制页面展示；接口授权、学院/批次范围和状态仍由后端逐请求验证。
 const selectedCollege = computed(() => colleges.value.find((item) => item.id === selectedCollegeId.value) ?? null)
 const selectedBatch = computed(() => detail.value?.batch ?? null)
 const stageOrder = ['FILLING', 'ROUND_1', 'ROUND_2', 'ROUND_3', 'SUPPLEMENT']
 const visibleStages = computed(() => stageOrder.filter((code) => code !== 'SUPPLEMENT' || selectedBatch.value?.supplementPlanned))
+
+function dismissLifecycleFeedback(): void {
+  lifecycleFeedback.value = null
+}
 const stageNames: Record<string, string> = {
   FILLING: '学生填报', ROUND_1: '第一轮处理', ROUND_2: '第二轮处理', ROUND_3: '第三轮处理', SUPPLEMENT: '补选窗口',
 }
@@ -63,7 +64,6 @@ const reopenableRounds = computed(() => (detail.value?.stages ?? []).flatMap((st
   if (!match || stage.status !== 'CLOSED' || stage.closeReason !== `ROUND_${match[1]}_DEADLINE`) return []
   return [{ roundNo: Number(match[1]) }]
 }))
-const hasSupplementSchedule = computed(() => detail.value?.stages.some((stage) => stage.stageCode === 'SUPPLEMENT' && stage.plannedEndAt) ?? false)
 
 function friendlyError(error: unknown): string {
   if (error instanceof ApiError) return error.message
@@ -128,9 +128,6 @@ async function loadSelectedBatch(): Promise<void> {
     statistics.value = loadedStatistics
     if (!openRounds.value.some((round) => round.roundNo === roundExtendNo.value)) roundExtendNo.value = openRounds.value[0]?.roundNo ?? null
     if (!reopenableRounds.value.some((round) => round.roundNo === roundReopenNo.value)) roundReopenNo.value = reopenableRounds.value[0]?.roundNo ?? null
-    supplementTeachers.value = loaded.batch.supplementPlanned
-      ? await selectionBatchService.supplementTeachers(loaded.batch.id) : []
-    supplementTeacherIds.value = supplementTeachers.value.filter((teacher) => teacher.permitted).map((teacher) => teacher.teacherId)
     for (const row of rows) quotaDrafts[row.teacherId] = row.quotaLimit === null ? '' : String(row.quotaLimit)
     editForm.name = loaded.batch.name
     editForm.appendReason = loaded.batch.appendReason ?? ''
@@ -205,19 +202,43 @@ async function runLifecycle(action: 'publish' | 'start' | 'pause' | 'resume' | '
     unarchive: '解除归档后批次回到已完成状态，供授权管理员进行审计纠错。确定继续吗？',
   }
   if (confirmations[action] && !window.confirm(confirmations[action])) return
-  saving.value = true; errorMessage.value = ''; successMessage.value = ''
+  saving.value = true; errorMessage.value = ''; successMessage.value = ''; lifecycleFeedback.value = null
+  const actionNames: Record<typeof action, string> = {
+    publish: '发布批次', start: '启动批次', pause: '暂停批次', resume: '恢复批次',
+    cancel: '取消批次', archive: '归档批次', unarchive: '解除归档',
+  }
+  const successMessages: Record<typeof action, string> = {
+    publish: '批次已发布。学生端刷新后，符合本学院和本学年年度资格的学生即可看到；填报业务需等批次启动并到达填报时间。',
+    start: '批次已启动。', pause: '批次已暂停。', resume: '批次已恢复，后续阶段已顺延。',
+    cancel: '批次已取消，历史记录已保留。', archive: '批次已归档。', unarchive: '批次已解除归档。',
+  }
+  const completedStatuses: Record<typeof action, string> = {
+    publish: 'SCHEDULED', start: 'ACTIVE', pause: 'PAUSED', resume: 'ACTIVE',
+    cancel: 'CANCELLED', archive: 'ARCHIVED', unarchive: 'COMPLETED',
+  }
   try {
     if (action === 'publish') detail.value = await selectionBatchService.publish(selectedBatch.value.id)
     else if (action === 'start') detail.value = await selectionBatchService.start(selectedBatch.value.id)
     else detail.value = await selectionBatchService.lifecycle(selectedBatch.value.id, action)
-    const successMessages: Record<typeof action, string> = {
-      publish: '批次已发布。', start: '批次已启动。', pause: '批次已暂停。', resume: '批次已恢复，后续阶段已顺延。',
-      cancel: '批次已取消，历史记录已保留。', archive: '批次已归档。', unarchive: '批次已解除归档。',
-    }
-    successMessage.value = successMessages[action]
+    lifecycleFeedback.value = { kind: 'success', message: successMessages[action] }
     await loadCollegeData()
     await loadSelectedBatch()
-  } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
+  } catch (error) {
+    const commandError = friendlyError(error)
+    successMessage.value = ''
+    await loadSelectedBatch()
+    if (!errorMessage.value && selectedBatch.value?.status === completedStatuses[action]) {
+      lifecycleFeedback.value = { kind: 'success', message: `${actionNames[action]}已完成；刷新后的批次状态已确认。` }
+    } else {
+      const refreshError = errorMessage.value
+      const currentStatus = selectedBatch.value ? (statusNames[selectedBatch.value.status] ?? selectedBatch.value.status) : '未知'
+      const message = refreshError
+        ? `${actionNames[action]}未能确认：${commandError}；读取当前批次状态也失败：${refreshError}`
+        : `${actionNames[action]}失败：${commandError}。刷新后的批次状态：${currentStatus}。`
+      lifecycleFeedback.value = { kind: 'error', message }
+    }
+    errorMessage.value = ''
+  }
   finally { saving.value = false }
 }
 
@@ -231,22 +252,6 @@ async function saveQuota(row: TeacherQuota): Promise<void> {
     await selectionBatchService.setQuota(selectedBatch.value.id, row, limit)
     quotas.value = await selectionBatchService.quotas(selectedBatch.value.id)
     successMessage.value = `${row.fullName} 的名额已保存。`
-  } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
-  finally { saving.value = false }
-}
-
-async function saveSupplementTeachers(): Promise<void> {
-  if (!selectedBatch.value) return
-  saving.value = true; errorMessage.value = ''; successMessage.value = ''
-  try {
-    supplementTeachers.value = await selectionBatchService.setSupplementTeachers(
-      selectedBatch.value.id, selectedBatch.value.rowVersion, supplementTeacherIds.value,
-      supplementReason.value.trim(),
-    )
-    detail.value = await selectionBatchService.batch(selectedBatch.value.id)
-    supplementTeacherIds.value = supplementTeachers.value.filter((teacher) => teacher.permitted).map((teacher) => teacher.teacherId)
-    supplementReason.value = ''
-    successMessage.value = '补选导师名单已更新；已提交申请仍由原导师处理。'
   } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
   finally { saving.value = false }
 }
@@ -373,23 +378,6 @@ onMounted(loadColleges)
         </div>
       </form>
 
-      <form v-if="props.canManage && selectedBatch.supplementPlanned" class="batch-quota-section supplement-teacher-section" @submit.prevent="saveSupplementTeachers">
-        <div class="batch-subheading"><span>补选导师名单</span><small>撤销许可只阻止新申请，已经提交的申请仍由原导师处理</small></div>
-        <div v-if="!hasSupplementSchedule" class="batch-empty">先配置并保存补选窗口排期，再设置参与导师。</div>
-        <template v-else>
-          <div v-if="!supplementTeachers.length" class="batch-empty">当前没有符合资格和公开资料要求的导师名额。</div>
-          <div v-else class="supplement-teacher-grid">
-            <label v-for="teacher in supplementTeachers" :key="teacher.teacherId" class="supplement-teacher-choice">
-              <input v-model="supplementTeacherIds" type="checkbox" :value="teacher.teacherId" :disabled="saving || selectedBatch.status === 'COMPLETED' || selectedBatch.status === 'ARCHIVED'" />
-              <span><strong>{{ teacher.fullName }}</strong><small>{{ teacher.employeeNo }} · 剩余名额 {{ teacher.remainingCount }}</small></span>
-              <em>{{ teacher.permitted ? '已授权' : '未授权' }}</em>
-            </label>
-          </div>
-          <label class="supplement-reason">名单调整原因<textarea v-model="supplementReason" rows="2" maxlength="4000" required /></label>
-          <button class="secondary-button" type="submit" :disabled="saving || !supplementReason.trim() || ['COMPLETED', 'ARCHIVED', 'CANCELLED'].includes(selectedBatch.status)">保存补选导师名单</button>
-        </template>
-      </form>
-
       <form v-if="props.canManage && openRounds.length && ['ACTIVE', 'PAUSED'].includes(selectedBatch.status)" class="batch-quota-section round-extension-section" @submit.prevent="extendRound">
         <div class="batch-subheading"><span>常规轮次延期</span><small>仅可在该轮原截止前延长；后续阶段会按相同时间差顺延</small></div>
         <label>开放轮次<select v-model.number="roundExtendNo" required><option v-for="round in openRounds" :key="round.roundNo" :value="round.roundNo">第 {{ round.roundNo }} 轮</option></select></label>
@@ -463,10 +451,35 @@ onMounted(loadColleges)
       <strong>{{ canCreate ? '还没有互选批次' : '当前授权范围内没有批次' }}</strong><span>{{ canCreate ? '先创建草稿，再配置完整排期与导师名额。' : '请联系总管理员确认批次管理范围。' }}</span>
     </div>
   </section>
+  <Teleport to="body">
+    <div
+      v-if="lifecycleFeedback"
+      class="batch-toast"
+      :class="`batch-toast-${lifecycleFeedback.kind}`"
+      :role="lifecycleFeedback.kind === 'error' ? 'alert' : 'status'"
+      :aria-live="lifecycleFeedback.kind === 'error' ? 'assertive' : 'polite'"
+    >
+      <span class="batch-toast-icon" aria-hidden="true">{{ lifecycleFeedback.kind === 'success' ? '✓' : '!' }}</span>
+      <div class="batch-toast-copy">
+        <strong>{{ lifecycleFeedback.kind === 'success' ? '操作成功' : '操作未成功' }}</strong>
+        <p>{{ lifecycleFeedback.message }}</p>
+      </div>
+      <button class="batch-toast-close" type="button" aria-label="关闭提示" @click="dismissLifecycleFeedback">×</button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .batch-panel { color: #25364a; }
+.batch-toast { position: fixed; z-index: 10000; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: start; gap: 12px; width: min(520px, calc(100vw - 32px)); padding: 16px; border: 1px solid #d9e4e9; border-left: 5px solid #36806b; border-radius: 9px; background: #fff; box-shadow: 0 12px 36px rgba(22, 43, 57, .22); color: #263d4f; }
+.batch-toast-success { border-left-color: #36806b; }
+.batch-toast-error { border-left-color: #bd4a4a; }
+.batch-toast-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; background: #eaf5ef; color: #287052; font-weight: 800; }
+.batch-toast-error .batch-toast-icon { background: #fbefef; color: #a93131; }
+.batch-toast-copy strong { display: block; margin: 1px 0 4px; color: #24394f; font-size: .9rem; }
+.batch-toast-copy p { margin: 0; color: #53697d; font-size: .8rem; line-height: 1.55; }
+.batch-toast-close { width: 28px; height: 28px; border: 0; border-radius: 5px; background: transparent; color: #718194; cursor: pointer; font-size: 20px; line-height: 1; }
+.batch-toast-close:hover { background: #f2f5f7; color: #263d4f; }
 .batch-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid #dce4eb; }
 .batch-panel-heading h3 { margin: 3px 0 7px; color: #172b42; font-size: 1.5rem; letter-spacing: -.02em; }
 .batch-panel-heading p:last-child { max-width: 680px; margin: 0; color: #66778a; line-height: 1.6; }
@@ -521,14 +534,9 @@ onMounted(loadColleges)
 .batch-action-primary { margin-left: auto; }
 .batch-quota-section { padding: 19px 0 0; overflow: hidden; }
 .batch-quota-section>.batch-subheading { padding: 0 19px 16px; }
-.supplement-teacher-section,.round-extension-section { padding: 19px; }
-.supplement-teacher-section>.batch-subheading,.round-extension-section>.batch-subheading { padding: 0 0 16px; }
-.supplement-teacher-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:0 19px 15px; }
-.supplement-teacher-choice { display:flex; align-items:center; gap:10px; min-width:0; padding:10px; border:1px solid #e2e8ed; border-radius:7px; background:#fff; cursor:pointer; }
-.supplement-teacher-choice input { width:16px; height:16px; accent-color:#496f90; }
-.supplement-teacher-choice span { display:grid; flex:1; gap:3px; min-width:0; }.supplement-teacher-choice strong { color:#324a60; font-size:.8rem; }.supplement-teacher-choice small { color:#7c8b99; font-size:.68rem; }.supplement-teacher-choice em { color:#52715f; font-size:.68rem; font-style:normal; }
-.supplement-reason { display:grid; gap:6px; padding:0 19px 13px; color:#64788a; font-size:.75rem; }
-.supplement-reason textarea,.round-extension-section textarea,.round-extension-section input,.round-extension-section select { width:100%; min-height:39px; border:1px solid #cbd6df; border-radius:6px; padding:7px 9px; background:#fff; color:#20364d; font:inherit; }
+.round-extension-section { padding: 19px; }
+.round-extension-section>.batch-subheading { padding: 0 0 16px; }
+.round-extension-section textarea,.round-extension-section input,.round-extension-section select { width:100%; min-height:39px; border:1px solid #cbd6df; border-radius:6px; padding:7px 9px; background:#fff; color:#20364d; font:inherit; }
 .round-extension-section { display:grid; gap:12px; }
 .round-extension-section label { display:grid; gap:6px; color:#64788a; font-size:.75rem; }
 .batch-quota-table-wrap { overflow-x: auto; border-top: 1px solid #dce4eb; }
@@ -547,7 +555,6 @@ onMounted(loadColleges)
 .batch-empty-large strong { color: #304b63; }
 @media(max-width: 760px) {
   .batch-create-form { grid-template-columns: 1fr 1fr; }
-  .supplement-teacher-grid { grid-template-columns:1fr; padding-left:0; padding-right:0; }
   .batch-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .batch-phase-strip { grid-template-columns: 1fr 1fr; }
   .batch-phase:nth-child(2n) { border-right: 0; }

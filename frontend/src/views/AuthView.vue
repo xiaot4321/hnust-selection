@@ -252,7 +252,7 @@ onMounted(loadSession)
 
         <template v-if="canManageAdminAuthorizations">
           <span class="navigation-caption navigation-subheading">管理员管理</span>
-          <a v-if="canManagePersonnel" class="side-link" href="#personnel-management"><span class="side-link-mark" aria-hidden="true"></span>人员与资格</a>
+          <a v-if="canManagePersonnel" class="side-link" href="#personnel-management"><span class="side-link-mark" aria-hidden="true"></span>人员与目录</a>
           <a class="side-link" href="#admin-account-management"><span class="side-link-mark" aria-hidden="true"></span>管理员账号</a>
           <a class="side-link" href="#admin-authorization-management"><span class="side-link-mark" aria-hidden="true"></span>业务授权</a>
         </template>

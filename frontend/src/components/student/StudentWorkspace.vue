@@ -30,6 +30,7 @@ const sections: Array<{ key: Section; label: string }> = [
 const activeSection = ref<Section>('overview')
 const directoryMode = ref<'PREFERENCE' | 'SUPPLEMENT'>('PREFERENCE')
 const pageLoading = ref(true)
+const refreshingBatches = ref(false)
 const batchLoading = ref(false)
 const teacherLoading = ref(false)
 const submitting = ref(false)
@@ -148,6 +149,16 @@ function formatTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
+function hideTeacherPhoto(event: Event): void {
+  const image = event.target as HTMLImageElement | null
+  if (image) image.hidden = true
+}
+
+function preferenceButtonText(teacherId: number): string {
+  const index = preferenceDraft.value.findIndex((item) => item.teacherId === teacherId)
+  return index < 0 ? '加入志愿' : '已加入第 ' + (index + 1) + ' 志愿'
+}
+
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
     const map: Record<string, string> = {
@@ -210,12 +221,12 @@ watch(selectedBatchId, (batchId) => {
   if (!batchId) return
   draftChanged.value = false
   void loadBatch(batchId)
-  if (activeSection.value === 'teachers') void loadTeachers()
+  if (activeSection.value === 'teachers' || (activeSection.value === 'preferences' && canEditPreferences.value)) void loadTeachers()
 })
 watch(activeSection, (section) => {
   errorMessage.value = ''
   successMessage.value = ''
-  if (section === 'teachers') void loadTeachers()
+  if (section === 'teachers' || (section === 'preferences' && canEditPreferences.value)) void loadTeachers()
 })
 
 function openSection(section: Section, mode: 'PREFERENCE' | 'SUPPLEMENT' = 'PREFERENCE'): void {
@@ -226,24 +237,32 @@ function openSection(section: Section, mode: 'PREFERENCE' | 'SUPPLEMENT' = 'PREF
 }
 
 async function reloadBatches(): Promise<void> {
+  refreshingBatches.value = true
+  errorMessage.value = ''
   try {
     const response = await listStudentBatches()
     batches.value = response.items
-    if (selectedBatchId.value && !batches.value.some((item) => item.batchId === selectedBatchId.value)) {
+    if (!selectedBatchId.value || !batches.value.some((item) => item.batchId === selectedBatchId.value)) {
       selectedBatchId.value = batches.value[0]?.batchId ?? null
     }
   } catch (error) { errorMessage.value = errorText(error) }
+  finally { refreshingBatches.value = false }
 }
 
 async function loadTeachers(): Promise<void> {
   if (!selectedBatchId.value) return
+  if (activeSection.value === 'preferences' && !canEditPreferences.value) {
+    teachers.value = []
+    teacherTotal.value = 0
+    return
+  }
   teacherLoading.value = true
   try {
     const response = await listTeachers({
       batchId: selectedBatchId.value,
       keyword: teacherFilter.keyword.trim() || undefined,
       researchDirection: teacherFilter.researchDirection.trim() || undefined,
-      canApply: directoryMode.value === 'SUPPLEMENT' || teacherFilter.onlyApplicable ? true : undefined,
+      canApply: activeSection.value === 'preferences' || directoryMode.value === 'SUPPLEMENT' || teacherFilter.onlyApplicable ? true : undefined,
       pageNo: teacherPage.value,
       pageSize: 20,
     })
@@ -268,7 +287,13 @@ function changeTeacherPage(page: number): void {
 async function showTeacher(teacherId: number): Promise<void> {
   if (!selectedBatchId.value) return
   teacherDetailLoading.value = true
-  try { teacherDetail.value = await getTeacherDetail(teacherId, selectedBatchId.value) }
+  try {
+    teacherDetail.value = await getTeacherDetail(teacherId, selectedBatchId.value)
+    teachers.value = teachers.value.map((teacher) => teacher.teacherId === teacherId && teacherDetail.value
+      ? { ...teacher, officialProfile: teacherDetail.value.officialProfile, researchDirections: teacherDetail.value.researchDirections,
+          profileSummary: teacherDetail.value.profileSummary }
+      : teacher)
+  }
   catch (error) { errorMessage.value = errorText(error) }
   finally { teacherDetailLoading.value = false }
 }
@@ -320,6 +345,7 @@ async function confirmIdentity(): Promise<void> {
     successMessage.value = '身份信息已确认，可以继续办理本批次业务。'
     identityChecked.value = false
     await reloadBatches()
+    await loadTeachers()
   } catch (error) { errorMessage.value = errorText(error) }
   finally { submitting.value = false }
 }
@@ -506,7 +532,10 @@ onMounted(() => { void initialize() })
         <div v-if="!selectedBatch" class="empty-batch">
           <p class="section-kicker">当前互选安排</p>
           <h3>暂时没有可办理的批次</h3>
-          <p>批次发布并与你的资格范围匹配后，会显示在这里。你可以先核对个人资料和身份信息。</p>
+          <p>本学院已发布批次只对该学年年度资格为“符合（ELIGIBLE）”且当前有效的学生显示。刚发布批次时请先刷新；若仍未显示，请联系管理员核对你的学院、学年和年度资格。</p>
+          <button class="student-button" type="button" :disabled="refreshingBatches" @click="reloadBatches">
+            {{ refreshingBatches ? '正在刷新…' : '刷新批次' }}
+          </button>
           <button class="student-button primary" type="button" @click="openSection('profile')">查看个人资料</button>
         </div>
 
@@ -588,7 +617,7 @@ onMounted(() => { void initialize() })
           <div><p class="section-kicker">浏览与比较</p><h3>{{ directoryMode === 'SUPPLEMENT' ? '选择补选导师' : '导师目录' }}</h3><p class="section-copy">查看公开资料和本人的可填报状态。目录不显示导师剩余名额。</p></div>
         </div>
         <form class="teacher-filters" @submit.prevent="searchTeachers">
-          <label><span>姓名或工号</span><input v-model="teacherFilter.keyword" type="search" placeholder="输入姓名或工号" /></label>
+          <label><span>导师姓名</span><input v-model="teacherFilter.keyword" type="search" placeholder="输入导师姓名" /></label>
           <label><span>研究方向</span><input v-model="teacherFilter.researchDirection" type="search" placeholder="输入研究方向" /></label>
           <label v-if="directoryMode === 'PREFERENCE'" class="filter-check"><input v-model="teacherFilter.onlyApplicable" type="checkbox" /><span>只看可填报导师</span></label>
           <button class="student-button secondary" type="submit" :disabled="teacherLoading || !selectedBatch">{{ teacherLoading ? '正在查询…' : '筛选导师' }}</button>
@@ -598,10 +627,10 @@ onMounted(() => { void initialize() })
         <p v-else-if="!teacherLoading && !teachers.length" class="empty-note">没有符合当前筛选条件的导师。</p>
         <div v-else class="teacher-list">
           <article v-for="teacher in teachers" :key="teacher.teacherId" class="teacher-row">
-            <span class="teacher-initial" aria-hidden="true">{{ teacher.displayName.slice(0, 1) }}</span>
+            <span class="teacher-initial" aria-hidden="true"><span>{{ teacher.displayName.slice(0, 1) }}</span><img v-if="teacher.officialProfile?.photoUrl" :src="teacher.officialProfile.photoUrl" :alt="teacher.displayName + '照片'" @error="hideTeacherPhoto" /></span>
             <div class="teacher-main">
               <div class="teacher-name-line">
-                <h4>{{ teacher.displayName }}</h4><span>工号 {{ teacher.employeeNo }}</span>
+                <h4>{{ teacher.displayName }}</h4><span v-if="teacher.officialProfile?.professionalTitle">{{ teacher.officialProfile.professionalTitle }}</span>
                 <span class="fillable-tag" :class="{ unavailable: !teacher.canApply }">{{ teacher.canApply ? '可填报' : '暂不可填报' }}</span>
               </div>
               <p class="teacher-directions">{{ teacher.researchDirections.join(' / ') || '研究方向待完善' }}</p>
@@ -635,8 +664,7 @@ onMounted(() => { void initialize() })
 
       <section v-else-if="activeSection === 'preferences'" class="student-section">
         <div class="section-title-row">
-          <div><p class="section-kicker">一至三位不同导师</p><h3>我的志愿</h3><p class="section-copy">按意愿排好顺序后一次提交完整志愿。导师只会在对应轮次看到投向自己的申请。</p></div>
-          <button class="student-button secondary" type="button" @click="openSection('teachers', 'PREFERENCE')">浏览导师目录</button>
+          <div><p class="section-kicker">一至三位不同导师</p><h3>我的志愿</h3><p class="section-copy">查看适合本人身份的导师资料，直接加入并排列志愿；导师只会在对应轮次看到投向自己的申请。</p></div>
         </div>
         <div v-if="!selectedBatch" class="empty-note">当前没有可办理的互选批次。</div>
         <template v-else>
@@ -645,6 +673,46 @@ onMounted(() => { void initialize() })
             <label class="confirm-check"><input v-model="identityChecked" type="checkbox" />我已核对，信息无误</label>
             <button class="student-button secondary" type="button" :disabled="submitting" @click="confirmIdentity">{{ submitting ? '正在确认…' : '确认身份信息' }}</button>
           </div>
+          <section v-if="canEditPreferences" class="preference-picker" aria-labelledby="preference-picker-title">
+            <div class="preference-picker-heading">
+              <div><p class="section-kicker">按当前专业与学位筛选</p><h4 id="preference-picker-title">可填报导师 <span>{{ teacherTotal }}</span></h4></div>
+              <p>先查看导师公开资料，再加入志愿；最多选择三位。</p>
+            </div>
+            <form class="teacher-filters" @submit.prevent="searchTeachers">
+              <label><span>导师姓名</span><input v-model="teacherFilter.keyword" type="search" placeholder="输入导师姓名" /></label>
+              <label><span>研究方向</span><input v-model="teacherFilter.researchDirection" type="search" placeholder="输入研究方向" /></label>
+              <button class="student-button secondary" type="submit" :disabled="teacherLoading">{{ teacherLoading ? '正在查询…' : '筛选导师' }}</button>
+            </form>
+            <div v-if="teacherLoading && !teachers.length" class="student-loading compact"><span class="loading-mark"></span><p>正在读取可填报导师</p></div>
+            <p v-else-if="!teacherLoading && !teachers.length" class="empty-note">当前没有符合本人专业、学位和筛选条件的可填报导师。</p>
+            <div v-else class="teacher-list preference-candidates">
+              <article v-for="teacher in teachers" :key="teacher.teacherId" class="teacher-row preference-candidate">
+                <span class="teacher-initial" aria-hidden="true"><span>{{ teacher.displayName.slice(0, 1) }}</span><img v-if="teacher.officialProfile?.photoUrl" :src="teacher.officialProfile.photoUrl" :alt="teacher.displayName + '照片'" @error="hideTeacherPhoto" /></span>
+                <div class="teacher-main">
+                  <div class="teacher-name-line"><h4>{{ teacher.displayName }}</h4><span v-if="teacher.officialProfile?.professionalTitle">{{ teacher.officialProfile.professionalTitle }}</span><span class="fillable-tag">可填报</span></div>
+                  <p class="teacher-directions">{{ teacher.researchDirections.join(' / ') || '研究方向待完善' }}</p>
+                  <p class="teacher-summary">{{ teacher.profileSummary || '导师简介待完善。可打开详情查看学校官网公开资料。' }}</p>
+                  <div class="teacher-scope">
+                    <span v-for="degree in teacher.allowedDegreeTypes" :key="degree">{{ degree === 'ACADEMIC_MASTER' ? '学硕' : '专硕' }}</span>
+                    <span v-for="major in teacher.allowedMajors" :key="major.majorId">{{ major.majorName }}</span>
+                  </div>
+                </div>
+                <div class="teacher-actions">
+                  <button class="quiet-button" type="button" @click="showTeacher(teacher.teacherId)">详细资料</button>
+                  <button class="student-button small" type="button"
+                    :disabled="preferenceDraft.some((item) => item.teacherId === teacher.teacherId) || preferenceDraft.length >= 3 || submitting"
+                    @click="addPreference(teacher)">
+                    {{ preferenceButtonText(teacher.teacherId) }}
+                  </button>
+                </div>
+              </article>
+            </div>
+            <div v-if="teacherTotal > 20" class="pagination-row">
+              <button class="quiet-button" type="button" :disabled="teacherPage <= 1" @click="changeTeacherPage(teacherPage - 1)">上一页</button>
+              <span>第 {{ teacherPage }} / {{ teacherPageCount }} 页，共 {{ teacherTotal }} 位可填报导师</span>
+              <button class="quiet-button" type="button" :disabled="teacherPage >= teacherPageCount" @click="changeTeacherPage(teacherPage + 1)">下一页</button>
+            </div>
+          </section>
           <div class="preference-editor">
             <div class="preference-editor-head">
               <div><p class="section-kicker">当前版本</p><h4>{{ preferences?.preferenceStatus === 'LOCKED' ? '志愿已锁定' : '排列你的志愿' }}</h4></div>
@@ -653,7 +721,7 @@ onMounted(() => { void initialize() })
             <ol class="preference-list">
               <li v-for="(item, index) in preferenceDraft" :key="item.teacherId">
                 <span class="rank-number">{{ index + 1 }}</span>
-                <div class="rank-copy"><strong>{{ item.teacherName }}</strong><small>{{ item.researchDirections?.join('、') || ('工号 ' + item.employeeNo) }}</small></div>
+                <div class="rank-copy"><strong>{{ item.teacherName }}</strong><small>{{ item.researchDirections?.join('、') || '研究方向待完善' }}</small></div>
                 <div v-if="canEditPreferences" class="rank-controls">
                   <button class="icon-button" type="button" :disabled="index === 0" :aria-label="'将' + item.teacherName + '上移'" @click="movePreference(index, -1)">↑</button>
                   <button class="icon-button" type="button" :disabled="index === preferenceDraft.length - 1" :aria-label="'将' + item.teacherName + '下移'" @click="movePreference(index, 1)">↓</button>
@@ -661,7 +729,7 @@ onMounted(() => { void initialize() })
                 </div>
               </li>
               <li v-for="slot in Math.max(0, 3 - preferenceDraft.length)" :key="'empty-' + slot" class="empty-slot">
-                <span class="rank-number">{{ preferenceDraft.length + slot + 1 }}</span><span>选择导师后会出现在这里</span>
+                <span class="rank-number">{{ preferenceDraft.length + slot }}</span><span>选择导师后会出现在这里</span>
               </li>
             </ol>
             <div class="preference-footer">
@@ -669,7 +737,6 @@ onMounted(() => { void initialize() })
               <p v-else-if="preferences?.preferenceStatus === 'LOCKED'">填报窗口已关闭，志愿顺序已锁定。</p>
               <p v-else>当前阶段不能修改志愿。</p>
               <div class="preference-buttons">
-                <button class="student-button secondary" type="button" :disabled="!canEditPreferences || submitting" @click="openSection('teachers', 'PREFERENCE')">选择导师</button>
                 <button class="student-button primary" type="button" :disabled="!canEditPreferences || submitting" @click="savePreferences">
                   {{ submitting ? '正在保存…' : preferences?.preferenceStatus === 'SUBMITTED' ? '保存新版本' : '提交志愿' }}
                 </button>
@@ -832,15 +899,30 @@ onMounted(() => { void initialize() })
         <button class="detail-close" type="button" aria-label="关闭导师详情" @click="teacherDetail = null">×</button>
         <div v-if="teacherDetailLoading" class="student-loading compact"><span class="loading-mark"></span><p>正在读取导师资料</p></div>
         <template v-else-if="teacherDetail">
-          <p class="section-kicker">导师公开资料</p><h3 id="teacher-detail-title">{{ teacherDetail.displayName }}</h3>
-          <p class="teacher-detail-id">工号 {{ teacherDetail.employeeNo }}</p>
-          <p class="teacher-directions">{{ teacherDetail.researchDirections.join(' / ') }}</p>
-          <p class="teacher-detail-bio">{{ teacherDetail.biography || teacherDetail.profileSummary || '暂无个人简介。' }}</p>
+          <div class="teacher-detail-heading">
+            <div class="teacher-detail-photo"><span aria-hidden="true">{{ teacherDetail.displayName.slice(0, 1) }}</span><img v-if="teacherDetail.officialProfile?.photoUrl" :src="teacherDetail.officialProfile.photoUrl" :alt="teacherDetail.displayName + '照片'" @error="hideTeacherPhoto" /></div>
+            <div><p class="section-kicker">导师公开资料</p><h3 id="teacher-detail-title">{{ teacherDetail.displayName }}</h3><p class="teacher-detail-title">{{ [teacherDetail.officialProfile?.professionalTitle, teacherDetail.officialProfile?.department].filter(Boolean).join(' · ') || '导师' }}</p></div>
+          </div>
+          <p class="teacher-directions">{{ teacherDetail.researchDirections.join(' / ') || '研究方向待完善' }}</p>
+          <div class="teacher-detail-section"><h4>个人简介</h4><p class="teacher-detail-bio">{{ teacherDetail.biography || teacherDetail.profileSummary || teacherDetail.officialProfile?.biography || '暂无个人简介。' }}</p></div>
+          <div v-if="teacherDetail.officialProfile?.educationLevel || teacherDetail.officialProfile?.teachingLevel" class="teacher-detail-facts">
+            <div v-if="teacherDetail.officialProfile?.educationLevel"><span>学历</span><strong>{{ teacherDetail.officialProfile.educationLevel }}</strong></div>
+            <div v-if="teacherDetail.officialProfile?.teachingLevel"><span>执教层次</span><strong>{{ teacherDetail.officialProfile.teachingLevel }}</strong></div>
+          </div>
+          <div v-if="teacherDetail.officialProfile?.educationExperience" class="teacher-detail-section"><h4>学习经历</h4><p>{{ teacherDetail.officialProfile.educationExperience }}</p></div>
+          <div v-if="teacherDetail.officialProfile?.workExperience" class="teacher-detail-section"><h4>工作经历</h4><p>{{ teacherDetail.officialProfile.workExperience }}</p></div>
+          <div v-if="teacherDetail.officialProfile?.courses" class="teacher-detail-section"><h4>承担课程</h4><p>{{ teacherDetail.officialProfile.courses }}</p></div>
+          <div v-if="teacherDetail.officialProfile?.researchAndAchievements" class="teacher-detail-section"><h4>科研与成果</h4><p>{{ teacherDetail.officialProfile.researchAndAchievements }}</p></div>
           <div class="teacher-scope">
             <span v-for="degree in teacherDetail.allowedDegreeTypes" :key="degree">{{ degree === 'ACADEMIC_MASTER' ? '学硕' : '专硕' }}</span>
             <span v-for="major in teacherDetail.allowedMajors" :key="major.majorId">{{ major.majorName }}</span>
           </div>
           <p class="teacher-detail-status">{{ teacherDetail.canApply ? '按当前身份和批次可填报' : '按当前身份或批次暂不可填报' }}</p>
+          <div v-if="teacherDetail.officialProfile?.profileUrl" class="teacher-profile-attribution">
+            <span>学校公开资料来源：{{ teacherDetail.officialProfile.sourceName || '湖南科技大学教师主页' }}<template v-if="teacherDetail.officialProfile.cachedAt"> · 更新于 {{ formatTime(teacherDetail.officialProfile.cachedAt) }}</template></span>
+            <a :href="teacherDetail.officialProfile.profileUrl" target="_blank" rel="noopener noreferrer">访问官方主页 ↗</a>
+          </div>
+          <p v-else class="teacher-profile-attribution">页面所列系统资料来自审核通过的导师公开信息；学校主页暂未匹配到唯一记录。</p>
         </template>
       </section>
     </div>
@@ -1212,6 +1294,14 @@ onMounted(() => { void initialize() })
 .teacher-filters label { display: grid; gap: 6px; }
 .teacher-filters .filter-check { display: flex; min-height: 40px; align-items: center; gap: 7px; white-space: nowrap; }
 .teacher-filters input[type='checkbox'], .confirm-check input { accent-color: var(--student-blue-mid); }
+.preference-picker { margin: 0 0 16px; padding: 17px 18px 6px; border: 1px solid var(--student-line); background: #fbfcfc; }
+.preference-picker-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.preference-picker-heading h4 { margin: 4px 0 0; color: var(--student-blue); font-size: 15px; }
+.preference-picker-heading h4 span { margin-left: 4px; color: var(--student-faint); font-size: 11px; font-weight: 500; }
+.preference-picker-heading > p { margin: 0 0 2px; color: var(--student-muted); font-size: 10px; }
+.preference-picker .teacher-filters { grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto; padding: 0 0 13px; border: 0; background: transparent; }
+.preference-candidates { border-top: 1px solid var(--student-line); }
+.preference-candidate { padding: 14px 3px; }
 .teacher-list { border-top: 1px solid var(--student-line); }
 .teacher-row {
   display: grid;
@@ -1222,6 +1312,8 @@ onMounted(() => { void initialize() })
   border-bottom: 1px solid var(--student-line);
 }
 .teacher-initial {
+  position: relative;
+  overflow: hidden;
   display: grid;
   width: 40px;
   height: 40px;
@@ -1232,6 +1324,7 @@ onMounted(() => { void initialize() })
   font-size: 15px;
   font-weight: 750;
 }
+.teacher-initial img, .teacher-detail-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .teacher-name-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 11px; }
 .teacher-name-line h4 { margin: 0; color: var(--student-blue); font-size: 14px; }
 .teacher-name-line > span:not(.fillable-tag) { color: var(--student-faint); font-size: 10px; }
@@ -1354,16 +1447,31 @@ onMounted(() => { void initialize() })
 .notice-copy p { margin: 7px 0 0; color: var(--student-muted); font-size: 11px; line-height: 1.8; white-space: pre-wrap; }
 
 .detail-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(30, 47, 54, .36); }
-.teacher-detail { position: relative; width: min(100%, 540px); max-height: 80vh; overflow: auto; padding: 27px; border-top: 4px solid var(--student-blue-mid); background: #fff; box-shadow: 0 18px 55px rgba(25, 47, 58, .17); }
+.teacher-detail { position: relative; width: min(100%, 680px); max-height: 86vh; overflow: auto; padding: 27px; border-top: 4px solid var(--student-blue-mid); background: #fff; box-shadow: 0 18px 55px rgba(25, 47, 58, .17); }
 .detail-close { position: absolute; top: 9px; right: 12px; width: 32px; height: 32px; border: 0; background: transparent; color: var(--student-muted); cursor: pointer; font-size: 23px; }
 .teacher-detail h3 { margin: 9px 0 3px; color: var(--student-blue); font-size: 21px; }
-.teacher-detail-id, .teacher-detail-status { color: var(--student-muted); font-size: 10px; }
+.teacher-detail-heading { display: flex; align-items: center; gap: 16px; padding-right: 28px; }
+.teacher-detail-photo { position: relative; display: grid; width: 92px; height: 112px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid #d4e0e3; background: var(--student-blue-light); color: var(--student-blue); font-size: 31px; font-weight: 750; }
+.teacher-detail-title { margin: 5px 0 0; color: var(--student-muted); font-size: 11px; }
+.teacher-detail-status { color: var(--student-muted); font-size: 10px; }
+.teacher-detail-section { margin-top: 17px; padding-top: 13px; border-top: 1px solid var(--student-line); }
+.teacher-detail-section h4 { margin: 0 0 7px; color: var(--student-blue); font-size: 12px; }
+.teacher-detail-section > p { margin: 0; color: var(--student-ink); font-size: 11px; line-height: 1.85; white-space: pre-wrap; }
 .teacher-detail-bio { margin: 15px 0; color: var(--student-ink); font-size: 12px; line-height: 1.9; white-space: pre-wrap; }
 .teacher-detail-status { margin-top: 17px; color: var(--student-green); }
+.teacher-detail-facts { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 15px; }
+.teacher-detail-facts div { display: grid; gap: 3px; }
+.teacher-detail-facts span { color: var(--student-faint); font-size: 9px; }
+.teacher-detail-facts strong { color: var(--student-ink); font-size: 11px; font-weight: 600; }
+.teacher-profile-attribution { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--student-line); color: var(--student-faint); font-size: 9px; line-height: 1.6; }
+.teacher-profile-attribution a { color: var(--student-blue-mid); text-decoration: none; }
+.teacher-profile-attribution a:hover { text-decoration: underline; }
 
 @media (max-width: 850px) {
   .student-heading { align-items: flex-start; flex-direction: column; }
   .teacher-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .preference-picker .teacher-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .preference-picker-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
   .profile-grid { grid-template-columns: 1fr; }
   .resume-card { grid-column: auto; }
 }
@@ -1384,6 +1492,8 @@ onMounted(() => { void initialize() })
   .teacher-initial { width: 34px; height: 34px; }
   .teacher-actions { grid-column: 2; flex-direction: row; align-items: center; justify-content: flex-start; }
   .teacher-name-line h4 { width: 100%; }
+  .teacher-detail { padding: 23px 18px; }
+  .teacher-detail-photo { width: 72px; height: 88px; }
   .pagination-row { gap: 10px; font-size: 9px; }
   .identity-confirm-box { grid-template-columns: 1fr; align-items: flex-start; }
   .preference-footer { align-items: flex-start; flex-direction: column; }

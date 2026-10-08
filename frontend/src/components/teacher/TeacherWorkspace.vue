@@ -28,7 +28,7 @@ const supplements = ref<TeacherSupplementApplication[]>([])
 const selectedRoundIds = ref<number[]>([])
 const selectedSupplementIds = ref<number[]>([])
 const directions = ref('')
-const biography = ref('')
+const biographySections = ref(emptyBiographySections())
 const messageTitle = ref('互选申请沟通')
 const messageContent = ref('')
 const selectedNoticeRefs = ref<string[]>([])
@@ -47,6 +47,58 @@ const allNoticeCandidates = computed(() => [
 const reviewLabel = computed(() => ({
   DRAFT: '待完善', PENDING_REVIEW: '待管理员审核', APPROVED: '已审核', PUBLISHED: '已公开', REJECTED: '需修改',
 }[profile.value?.reviewStatus ?? 'DRAFT'] ?? (profile.value?.reviewStatus || '尚未提交')))
+const biographyLength = computed(() => serializeBiographySections(biographySections.value).length)
+const biographyTooLong = computed(() => biographyLength.value > 10000)
+
+const biographySectionSpecs = [
+  { key: 'basic', label: '基本情况', prompt: '介绍个人学术背景、职称学历、所在系部/所和指导风格。', rows: 5 },
+  { key: 'education', label: '学习经历', prompt: '按时间填写毕业院校、专业、学位等经历。', rows: 4 },
+  { key: 'work', label: '工作经历', prompt: '按时间填写任职单位、院系、岗位或职务。', rows: 4 },
+  { key: 'courses', label: '承担课程', prompt: '可分别介绍本科生、研究生课程。', rows: 4 },
+  { key: 'research', label: '科研项目与成果', prompt: '介绍主持课题、论文、专著及代表性科研成果。', rows: 5 },
+  { key: 'honors', label: '奖励荣誉', prompt: '填写教学、科研奖励和指导学生成果。', rows: 4 },
+  { key: 'service', label: '学术服务与其他', prompt: '填写学术兼职、社会服务或其他希望公开的内容。', rows: 4 },
+] as const
+type BiographySectionKey = typeof biographySectionSpecs[number]['key']
+type BiographySections = Record<BiographySectionKey, string>
+
+function emptyBiographySections(): BiographySections {
+  return { basic: '', education: '', work: '', courses: '', research: '', honors: '', service: '' }
+}
+
+function serializeBiographySections(value: BiographySections): string {
+  return biographySectionSpecs
+    .map((section) => ({ label: section.label, content: value[section.key]?.trim() ?? '' }))
+    .filter((section) => section.content.length > 0)
+    .map((section) => `【${section.label}】\n${section.content}`)
+    .join('\n\n')
+}
+
+function parseBiographySections(value: string | null | undefined): BiographySections {
+  const sections = emptyBiographySections()
+  if (!value?.trim()) return sections
+
+  const keyByLabel = new Map<string, BiographySectionKey>(biographySectionSpecs.map((section) => [section.label, section.key]))
+  const heading = /^【([^】]+)】[\t ]*\r?$/gm
+  const matches: Array<{ label: string; start: number; end: number }> = []
+  let match: RegExpExecArray | null
+  while ((match = heading.exec(value)) !== null) {
+    if (keyByLabel.has(match[1])) matches.push({ label: match[1], start: match.index, end: heading.lastIndex })
+  }
+
+  if (!matches.length || value.slice(0, matches[0].start).trim()) {
+    sections.basic = value
+    return sections
+  }
+
+  matches.forEach((item, index) => {
+    const key = keyByLabel.get(item.label)
+    if (!key) return
+    const content = value.slice(item.end, matches[index + 1]?.start ?? value.length).trim()
+    sections[key] = sections[key] ? `${sections[key]}\n\n${content}` : content
+  })
+  return sections
+}
 
 function messageFor(error: unknown): string {
   if (error instanceof ApiError) return error.message
@@ -72,7 +124,7 @@ async function loadProfile(): Promise<void> {
   try {
     profile.value = await teacherWorkspaceService.profile()
     directions.value = profile.value.submittedResearchDirections ?? profile.value.publishedResearchDirections ?? ''
-    biography.value = profile.value.submittedBiography ?? profile.value.publishedBiography ?? ''
+    biographySections.value = parseBiographySections(profile.value.submittedBiography ?? profile.value.publishedBiography)
   } catch (error) { errorMessage.value = messageFor(error) }
 }
 async function loadSummary(): Promise<void> {
@@ -191,12 +243,15 @@ async function decideSelectedSupplements(decision: 'ADMIT' | 'NOT_ADMITTED'): Pr
   finally { bulkBusy.value = false }
 }
 async function saveProfile(): Promise<void> {
-  if (!profile.value) return
+  if (!profile.value || biographyTooLong.value) return
   savingProfile.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
-    profile.value = await teacherWorkspaceService.saveProfile(profile.value, { researchDirections: directions.value, biography: biography.value })
+    profile.value = await teacherWorkspaceService.saveProfile(profile.value, {
+      researchDirections: directions.value,
+      biography: serializeBiographySections(biographySections.value),
+    })
     directions.value = profile.value.submittedResearchDirections ?? ''
-    biography.value = profile.value.submittedBiography ?? ''
+    biographySections.value = parseBiographySections(profile.value.submittedBiography)
     successMessage.value = '资料已提交管理员审核；审核通过后会显示在学生导师目录。'
   } catch (error) { errorMessage.value = messageFor(error); await loadProfile() }
   finally { savingProfile.value = false }
@@ -325,11 +380,18 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
     <section v-else-if="section === 'profile'" class="teacher-panel" aria-labelledby="teacher-profile-heading">
       <div class="teacher-panel-heading"><div><span class="teacher-kicker">PUBLIC PROFILE</span><h3 id="teacher-profile-heading">维护公开资料</h3><p>学生目录展示经管理员审核通过的版本；编辑内容提交后进入审核流程。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
       <div v-if="profile" class="teacher-profile-form"><div class="teacher-profile-identity"><span class="teacher-profile-avatar">{{ profile.fullName.slice(0, 1) }}</span><div><strong>{{ profile.fullName }}</strong><span>{{ profile.employeeNo }}</span></div></div>
-        <label>研究方向<textarea v-model="directions" rows="3" maxlength="2000" placeholder="介绍主要研究领域与方向"></textarea></label>
-        <label>个人简介<textarea v-model="biography" rows="6" maxlength="10000" placeholder="介绍指导风格、研究团队与相关信息"></textarea></label>
+        <div class="teacher-profile-guide"><strong>完善导师主页</strong><span>可参考教师主页的资料栏目填写。请只填写愿意公开的学术信息，不要填写电话、邮箱等个人联系方式。</span></div>
+        <label class="teacher-profile-field"><span>研究方向</span><small>概括主要研究领域；多个方向可分行填写。</small><textarea v-model="directions" rows="3" maxlength="2000" placeholder="例如：机器学习、工业视觉检测、智能制造"></textarea></label>
+        <div class="teacher-profile-sections" aria-label="导师简介内容">
+          <label v-for="item in biographySectionSpecs" :key="item.key" class="teacher-profile-field" :class="{ 'teacher-profile-field-wide': item.key === 'basic' || item.key === 'research' }">
+            <span>{{ item.label }}</span><small>{{ item.prompt }}</small>
+            <textarea v-model="biographySections[item.key]" :rows="item.rows" maxlength="10000" :placeholder="`填写${item.label}（可留空）`"></textarea>
+          </label>
+        </div>
+        <p class="teacher-profile-count" :class="{ 'teacher-profile-count-error': biographyTooLong }" aria-live="polite">简介内容 {{ biographyLength }}/10000 字{{ biographyTooLong ? '，请删减后再提交' : '' }}</p>
         <p v-if="profile.publishedResearchDirections || profile.publishedBiography" class="teacher-published-note">当前已公开版本仍保持展示，直到新版本审核通过。</p>
         <p v-if="profile.reviewComment" class="teacher-review-comment">最近审核意见：{{ profile.reviewComment }}</p>
-        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在提交…' : '提交管理员审核' }}</button>
+        <button class="teacher-admit-button" type="button" :disabled="savingProfile || biographyTooLong" @click="saveProfile">{{ savingProfile ? '正在提交…' : '提交管理员审核' }}</button>
       </div>
     </section>
 
@@ -399,8 +461,17 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
 .teacher-profile-identity div { display: grid; gap: 4px; }
 .teacher-profile-identity strong { color: var(--hnust-blue-deep); }
 .teacher-profile-identity span:not(.teacher-profile-avatar) { color: var(--hnust-muted); font-size: 12px; }
+.teacher-profile-guide { display: grid; gap: 4px; padding: 12px 14px; border-left: 3px solid var(--hnust-blue-dark); background: #f3f8fa; color: var(--hnust-muted); font-size: 12px; line-height: 1.65; }
+.teacher-profile-guide strong { color: var(--hnust-blue-deep); font-size: 13px; }
+.teacher-profile-field { display: grid; align-content: start; gap: 6px; color: var(--hnust-muted); font-size: 12px; }
+.teacher-profile-field > span { color: var(--hnust-ink); font-weight: 700; }
+.teacher-profile-field small { color: #71838a; font-size: 11px; line-height: 1.55; }
+.teacher-profile-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.teacher-profile-field-wide { grid-column: 1 / -1; }
+.teacher-profile-count { justify-self: end; margin: -5px 0 0; color: var(--hnust-muted); font-size: 11px; }
+.teacher-profile-count-error { color: #a33b3b; }
 .teacher-published-note,.teacher-review-comment { margin: 0; color: var(--hnust-muted); font-size: 12px; }
 .teacher-review-comment { padding: 10px; background: #f6f8f8; }
 .teacher-workspace button:focus-visible,.teacher-workspace a:focus-visible,.teacher-workspace select:focus-visible,.teacher-workspace input:focus-visible,.teacher-workspace textarea:focus-visible { outline: 3px solid #6d9caf; outline-offset: 2px; }
-@media (max-width: 760px) { .teacher-dashboard-header,.teacher-panel-heading { align-items: stretch; flex-direction: column; } .teacher-batch-picker { min-width: 0; } .teacher-message-box { grid-template-columns: 1fr; } .teacher-quota-cards { grid-template-columns: repeat(2,1fr); } .teacher-panel { padding: 15px; } }
+@media (max-width: 760px) { .teacher-dashboard-header,.teacher-panel-heading { align-items: stretch; flex-direction: column; } .teacher-batch-picker { min-width: 0; } .teacher-message-box { grid-template-columns: 1fr; } .teacher-quota-cards { grid-template-columns: repeat(2,1fr); } .teacher-profile-sections { grid-template-columns: 1fr; } .teacher-profile-field-wide { grid-column: auto; } .teacher-panel { padding: 15px; } }
 </style>

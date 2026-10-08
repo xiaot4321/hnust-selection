@@ -5,9 +5,11 @@ import {
   personnelManagementService,
   type AcademicYearOption,
   type CollegeOption,
+  type CreatedPerson,
   type EligibilityRecord,
   type ImportResult,
   type MajorRecord,
+  type PersonRecord,
 } from '../../services/personnelManagementService'
 
 /** 父页面只按会话授权控制入口显示；每个 API 仍由服务端复核真实权限和学院归属。 */
@@ -29,12 +31,17 @@ const studentTotal = ref(0)
 const teacherTotal = ref(0)
 const majors = ref<MajorRecord[]>([])
 const eligibilityRows = ref<EligibilityRecord[]>([])
+const eligibilityPeople = ref<PersonRecord[]>([])
+const eligibilityPeopleTotal = ref(0)
+const eligibilityPageNo = ref(1)
+const selectedEligibilityPersonIds = ref<number[]>([])
 const importResult = ref<ImportResult | null>(null)
 const createdPerson = ref<CreatedPerson | null>(null)
 const currentFile = ref<File | null>(null)
 const studentPageNo = ref(1)
 const teacherPageNo = ref(1)
 const pageSize = 20
+const eligibilityPageSize = 100
 let loadingCount = 0
 let collegeDataRequestId = 0
 let studentListRequestId = 0
@@ -46,7 +53,6 @@ const importLookupId = ref('')
 const studentSearch = ref('')
 const teacherSearch = ref('')
 const eligibilityIdentifier = ref('')
-const foundPerson = ref<PersonRecord | null>(null)
 
 // 人员新建表单只包含账号与学校基础档案字段；角色、初始密码和分类版本由后端生成。
 const studentForm = reactive({
@@ -61,6 +67,12 @@ const importForm = reactive({ personType: 'STUDENT' as 'STUDENT' | 'TEACHER' })
 
 const studentTotalPages = computed(() => Math.max(1, Math.ceil(studentTotal.value / pageSize)))
 const teacherTotalPages = computed(() => Math.max(1, Math.ceil(teacherTotal.value / pageSize)))
+const eligibilityTotalPages = computed(() => Math.max(1, Math.ceil(eligibilityPeopleTotal.value / eligibilityPageSize)))
+const currentEligibilityByPerson = computed(() => new Map(
+  eligibilityRows.value.filter((row) => row.validTo === null).map((row) => [row.personId, row]),
+))
+const allEligibilityPeopleSelected = computed(() => eligibilityPeople.value.length > 0 &&
+  eligibilityPeople.value.every((person) => selectedEligibilityPersonIds.value.includes(person.id)))
 
 /** 共享加载状态使用计数，避免并发查询中较早结束的请求提前关闭加载提示。 */
 function beginLoading(): () => void {
@@ -149,12 +161,20 @@ watch(collegeId, (newCollegeId, previousCollegeId) => {
   years.value = []
   majors.value = []
   eligibilityRows.value = []
-  foundPerson.value = null
+  eligibilityPeople.value = []
+  eligibilityPeopleTotal.value = 0
+  selectedEligibilityPersonIds.value = []
+  eligibilityPageNo.value = 1
   editingMajorId.value = null
   Object.assign(majorForm, { majorCode: '', name: '', validFrom: '', validTo: '', changeBasis: '' })
   void loadCollegeData()
 })
 onMounted(() => { void loadOptions() })
+watch(activeTab, (tab) => {
+  if (tab === 'eligibility' && collegeId.value !== null && eligibilityYearId.value !== null) {
+    void searchEligibilityPeople()
+  }
+})
 
 function resetMessages(): void {
   errorMessage.value = ''
@@ -232,20 +252,6 @@ async function toggleMajor(major: MajorRecord): Promise<void> {
   finally { saving.value = false }
 }
 
-async function lookupEligibilityPerson(): Promise<void> {
-  if (collegeId.value === null || !eligibilityIdentifier.value.trim()) return
-  resetMessages(); foundPerson.value = null
-  const finishLoading = beginLoading()
-  try {
-    const page = peopleType.value === 'STUDENT'
-      ? await personnelManagementService.students(collegeId.value, 1, eligibilityIdentifier.value)
-      : await personnelManagementService.teachers(collegeId.value, 1, eligibilityIdentifier.value)
-    foundPerson.value = page.items[0] ?? null
-    if (!foundPerson.value) errorMessage.value = '没有在当前授权学院找到这个学号或工号。'
-  } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { finishLoading() }
-}
-
 async function loadEligibility(): Promise<void> {
   if (collegeId.value === null || eligibilityYearId.value === null) return
   const finishLoading = beginLoading(); errorMessage.value = ''
@@ -257,18 +263,77 @@ async function loadEligibility(): Promise<void> {
   finally { finishLoading() }
 }
 
-async function saveEligibility(): Promise<void> {
-  if (collegeId.value === null || eligibilityYearId.value === null || !foundPerson.value || saving.value) return
-  resetMessages(); saving.value = true
+async function loadEligibilityPeople(pageNo = 1): Promise<void> {
+  if (collegeId.value === null) return
+  const finishLoading = beginLoading()
+  errorMessage.value = ''
   try {
-    await personnelManagementService.setEligibility({
-      personType: peopleType.value, personId: foundPerson.value.id, collegeId: collegeId.value,
-      academicYearId: eligibilityYearId.value, eligibilityStatus: eligibilityForm.status,
-      evidenceType: eligibilityForm.evidenceType, evidenceReference: eligibilityForm.evidenceReference,
-    })
-    successMessage.value = '年度资格已保存为新版本，历史记录仍可查询。'
-    foundPerson.value = null; eligibilityForm.evidenceReference = ''
+    const result = peopleType.value === 'STUDENT'
+      ? await personnelManagementService.students(collegeId.value, pageNo, eligibilityIdentifier.value, eligibilityPageSize)
+      : await personnelManagementService.teachers(collegeId.value, pageNo, eligibilityIdentifier.value, eligibilityPageSize)
+    eligibilityPeople.value = result.items
+    eligibilityPeopleTotal.value = result.total
+    eligibilityPageNo.value = result.pageNo
+  } catch (error) { errorMessage.value = friendlyError(error) }
+  finally { finishLoading() }
+}
+
+function toggleEligibilityPage(): void {
+  const visibleIds = new Set(eligibilityPeople.value.map((person) => person.id))
+  selectedEligibilityPersonIds.value = allEligibilityPeopleSelected.value
+    ? selectedEligibilityPersonIds.value.filter((id) => !visibleIds.has(id))
+    : [...new Set([...selectedEligibilityPersonIds.value, ...visibleIds])]
+}
+
+async function searchEligibilityPeople(): Promise<void> {
+  selectedEligibilityPersonIds.value = []
+  await Promise.all([loadEligibilityPeople(1), loadEligibility()])
+}
+
+async function changeEligibilityPage(pageNo: number): Promise<void> {
+  if (loading.value || saving.value || pageNo < 1 || pageNo > eligibilityTotalPages.value) return
+  await loadEligibilityPeople(pageNo)
+}
+
+async function saveEligibility(): Promise<void> {
+  if (collegeId.value === null || eligibilityYearId.value === null || !selectedEligibilityPersonIds.value.length || saving.value) return
+  resetMessages(); saving.value = true
+  const targetCollegeId = collegeId.value
+  const targetAcademicYearId = eligibilityYearId.value
+  const targetPersonType = peopleType.value
+  const targetStatus = eligibilityForm.status
+  const targetEvidenceType = eligibilityForm.evidenceType.trim()
+  const targetEvidenceReference = eligibilityForm.evidenceReference.trim()
+  const currentRecords = new Map(currentEligibilityByPerson.value)
+  const selectedIds = [...selectedEligibilityPersonIds.value]
+  const failures: number[] = []
+  let changed = 0
+  let unchanged = 0
+  try {
+    for (const personId of selectedIds) {
+      const current = currentRecords.get(personId)
+      const sameValues = current && current.status === targetStatus &&
+        current.evidenceType === targetEvidenceType &&
+        (current.evidenceReference ?? '') === targetEvidenceReference
+      if (sameValues) { unchanged += 1; continue }
+      try {
+        await personnelManagementService.setEligibility({
+          personType: targetPersonType, personId, collegeId: targetCollegeId,
+          academicYearId: targetAcademicYearId, eligibilityStatus: targetStatus,
+          evidenceType: targetEvidenceType, evidenceReference: targetEvidenceReference,
+        })
+        changed += 1
+      } catch {
+        failures.push(personId)
+      }
+    }
     await loadEligibility()
+    selectedEligibilityPersonIds.value = failures
+    if (failures.length) {
+      errorMessage.value = `批量保存完成：成功 ${changed} 人，未变化 ${unchanged} 人，失败 ${failures.length} 人。请核对失败人员后重试。`
+    } else {
+      successMessage.value = `年度资格批量处理完成：更新 ${changed} 人，未变化 ${unchanged} 人。`
+    }
   } catch (error) { errorMessage.value = friendlyError(error) }
   finally { saving.value = false }
 }
@@ -424,7 +489,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
           <button class="personnel-primary" type="submit" :disabled="saving">{{ saving ? '正在创建…' : '创建学生账号' }}</button>
         </form>
         <CredentialNotice v-if="createdPerson?.personType === 'STUDENT'" :person="createdPerson" />
-        <div class="personnel-list-heading"><h4>学生名单</h4><form @submit.prevent="searchPeople"><input v-model="studentSearch" placeholder="按学号精确查询"/><button class="personnel-secondary" type="submit">查询</button></form></div>
+        <div class="personnel-list-heading"><h4>学生名单</h4><form @submit.prevent="searchPeople"><input v-model="studentSearch" placeholder="按学号、姓名或专业关键词筛选"/><button class="personnel-secondary" type="submit">查询</button></form></div>
         <PersonTable :items="students" :kind="'STUDENT'" :loading="loading" />
         <div v-if="studentTotal > 0" class="personnel-pagination" aria-label="学生名单分页">
           <span>共 {{ studentTotal }} 人 · 第 {{ studentPageNo }} / {{ studentTotalPages }} 页</span>
@@ -441,7 +506,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
           <button class="personnel-primary" type="submit" :disabled="saving">{{ saving ? '正在创建…' : '创建导师账号' }}</button>
         </form>
         <CredentialNotice v-if="createdPerson?.personType === 'TEACHER'" :person="createdPerson" />
-        <div class="personnel-list-heading"><h4>导师名单</h4><form @submit.prevent="searchPeople"><input v-model="teacherSearch" placeholder="按工号精确查询"/><button class="personnel-secondary" type="submit">查询</button></form></div>
+        <div class="personnel-list-heading"><h4>导师名单</h4><form @submit.prevent="searchPeople"><input v-model="teacherSearch" placeholder="按工号或姓名关键词筛选"/><button class="personnel-secondary" type="submit">查询</button></form></div>
         <PersonTable :items="teachers" :kind="'TEACHER'" :loading="loading" />
         <div v-if="teacherTotal > 0" class="personnel-pagination" aria-label="导师名单分页">
           <span>共 {{ teacherTotal }} 人 · 第 {{ teacherPageNo }} / {{ teacherTotalPages }} 页</span>
@@ -467,21 +532,30 @@ async function changePeoplePage(pageNo: number): Promise<void> {
 
       <div v-else-if="activeTab === 'eligibility'" class="personnel-section">
         <h4>维护年度资格</h4>
-        <p class="personnel-help">每人每学年仅保留一条当前状态。再次修改会新增历史版本，原记录会带上失效时间。</p>
-        <div class="personnel-form">
-          <label>学年<select v-model.number="eligibilityYearId"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>
-          <label>人员类型<select v-model="peopleType"><option value="STUDENT">学生</option><option value="TEACHER">导师</option></select></label>
-          <label>学号或工号<input v-model="eligibilityIdentifier" placeholder="输入完整编号" /></label>
-          <button class="personnel-secondary lookup-button" type="button" :disabled="loading" @click="lookupEligibilityPerson">{{ loading ? '查询中…' : '查找人员' }}</button>
-          <label>资格状态<select v-model="eligibilityForm.status"><option value="ELIGIBLE">具备资格</option><option value="INELIGIBLE">不具备资格</option></select></label>
-          <label>资格依据类型<input v-model="eligibilityForm.evidenceType" maxlength="32" placeholder="例如 ROSTER_IMPORT" required /></label>
-          <label class="wide-field">资格依据说明<textarea v-model="eligibilityForm.evidenceReference" rows="2" placeholder="审批编号或名单来源说明" /></label>
+        <p class="personnel-help">先选学年和人员类型，再用关键词匹配学号/工号、姓名（学生还匹配专业）。从匹配名单勾选人员，切换分页时已选项会保留；提交后统一设置相同资格状态和依据，每人每学年的变更仍分别留存历史。</p>
+        <div class="personnel-form eligibility-filters">
+          <label>学年<select v-model.number="eligibilityYearId" :disabled="saving" @change="searchEligibilityPeople"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>
+          <label>人员类型<select v-model="peopleType" :disabled="saving" @change="searchEligibilityPeople"><option value="STUDENT">学生</option><option value="TEACHER">导师</option></select></label>
+          <label>关键词<input v-model="eligibilityIdentifier" :disabled="saving" :placeholder="peopleType === 'STUDENT' ? '学号、姓名或专业，可留空' : '工号或姓名，可留空'" @keyup.enter="searchEligibilityPeople" /></label>
+          <button class="personnel-secondary lookup-button" type="button" :disabled="loading || saving || eligibilityYearId === null" @click="searchEligibilityPeople">{{ loading ? '查询中…' : '查询名单' }}</button>
+          <label>批量设置为<select v-model="eligibilityForm.status" :disabled="saving"><option value="ELIGIBLE">具备资格</option><option value="INELIGIBLE">不具备资格</option></select></label>
+          <label>资格依据类型<input v-model="eligibilityForm.evidenceType" :disabled="saving" maxlength="32" placeholder="例如 ROSTER_IMPORT" required /></label>
+          <label class="wide-field">资格依据说明<textarea v-model="eligibilityForm.evidenceReference" :disabled="saving" rows="2" placeholder="审批编号或名单来源说明" /></label>
         </div>
-        <div v-if="foundPerson" class="found-person">
-          <span>已找到 {{ foundPerson.fullName }}（{{ foundPerson.identifier }}）</span>
-          <button class="personnel-primary" type="button" :disabled="saving || eligibilityYearId === null" @click="saveEligibility">{{ saving ? '正在保存…' : '保存资格版本' }}</button>
+        <div class="eligibility-toolbar">
+          <span>匹配 {{ eligibilityPeopleTotal }} 人 · 本页 {{ eligibilityPeople.length }} 人 · 已选 {{ selectedEligibilityPersonIds.length }} 人</span>
+          <button class="personnel-secondary" type="button" :disabled="loading || saving || !eligibilityPeople.length" @click="toggleEligibilityPage">{{ allEligibilityPeopleSelected ? '取消勾选当前页' : '全选当前页' }}</button>
         </div>
-        <div class="eligibility-toolbar"><label class="history-toggle"><input v-model="showEligibilityHistory" type="checkbox" @change="loadEligibility" />显示历史版本</label><button class="personnel-secondary" type="button" :disabled="loading || eligibilityYearId === null" @click="loadEligibility">查询资格记录</button></div>
+        <div class="personnel-table-wrap"><table><thead><tr><th>选择</th><th>人员</th><th>编号</th><th>当前年度资格</th><th>专业/学院</th></tr></thead><tbody>
+          <tr v-for="person in eligibilityPeople" :key="person.id"><td><input v-model="selectedEligibilityPersonIds" type="checkbox" :value="person.id" :disabled="saving" /></td><td>{{ person.fullName }}</td><td>{{ person.identifier }}</td><td>{{ currentEligibilityByPerson.get(person.id)?.status === 'ELIGIBLE' ? '具备资格' : currentEligibilityByPerson.get(person.id)?.status === 'INELIGIBLE' ? '不具备资格' : '未设置' }}</td><td>{{ person.majorName ?? person.collegeName }}</td></tr>
+          <tr v-if="!eligibilityPeople.length"><td colspan="5" class="table-empty">当前筛选条件下没有人员。</td></tr>
+        </tbody></table></div>
+        <div v-if="eligibilityPeopleTotal > 0" class="personnel-pagination" aria-label="年度资格人员分页">
+          <span>共 {{ eligibilityPeopleTotal }} 人 · 第 {{ eligibilityPageNo }} / {{ eligibilityTotalPages }} 页</span>
+          <div><button class="personnel-secondary" type="button" :disabled="loading || saving || eligibilityPageNo <= 1" @click="changeEligibilityPage(eligibilityPageNo - 1)">上一页</button><button class="personnel-secondary" type="button" :disabled="loading || saving || eligibilityPageNo >= eligibilityTotalPages" @click="changeEligibilityPage(eligibilityPageNo + 1)">下一页</button></div>
+        </div>
+        <button class="personnel-primary" type="button" :disabled="saving || loading || !selectedEligibilityPersonIds.length || eligibilityYearId === null || !eligibilityForm.evidenceType.trim()" @click="saveEligibility">{{ saving ? '正在批量保存…' : `批量保存所选人员（${selectedEligibilityPersonIds.length}）` }}</button>
+        <div class="eligibility-toolbar eligibility-history-toolbar"><label class="history-toggle"><input v-model="showEligibilityHistory" type="checkbox" :disabled="saving" @change="loadEligibility" />显示历史版本</label><button class="personnel-secondary" type="button" :disabled="loading || saving || eligibilityYearId === null" @click="loadEligibility">查询资格记录</button></div>
         <div class="personnel-table-wrap"><table><thead><tr><th>学年</th><th>人员</th><th>编号</th><th>资格</th><th>依据</th><th>生效区间</th></tr></thead><tbody>
           <tr v-for="row in eligibilityRows" :key="row.id"><td>{{ row.yearCode }}</td><td>{{ row.personName }} · {{ row.personType === 'STUDENT' ? '学生' : '导师' }}</td><td>{{ row.personIdentifier }}</td><td>{{ row.status === 'ELIGIBLE' ? '具备资格' : '不具备资格' }}</td><td>{{ row.evidenceType }}<small v-if="row.evidenceReference">{{ row.evidenceReference }}</small></td><td>{{ row.validFrom ?? '—' }}<br/><small>{{ row.validTo ? `至 ${row.validTo}` : '当前有效' }}</small></td></tr>
           <tr v-if="!eligibilityRows.length"><td colspan="6" class="table-empty">当前筛选条件下没有资格记录。</td></tr>

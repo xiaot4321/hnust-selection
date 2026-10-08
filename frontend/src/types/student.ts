@@ -83,10 +83,28 @@ export interface TeacherDirectoryItem {
   allowedDegreeTypes: DegreeType[]
   allowedMajors: StudentMajor[]
   canApply: boolean
+  officialProfile: TeacherOfficialProfile | null
 }
 
 export interface TeacherDetail extends TeacherDirectoryItem {
   biography: string
+}
+
+export interface TeacherOfficialProfile {
+  photoUrl: string | null
+  professionalTitle: string | null
+  educationLevel: string | null
+  department: string | null
+  teachingLevel: string | null
+  researchDirections: string[]
+  biography: string | null
+  educationExperience: string | null
+  workExperience: string | null
+  courses: string | null
+  researchAndAchievements: string | null
+  profileUrl: string | null
+  sourceName: string | null
+  cachedAt: string | null
 }
 
 export interface PreferenceItem {

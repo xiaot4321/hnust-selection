@@ -85,13 +85,13 @@ export const personnelManagementService = {
   majors(collegeId: number, activeOnly = false): Promise<MajorRecord[]> {
     return request(`/admin/majors?collegeId=${collegeId}&activeOnly=${activeOnly}`)
   },
-  students(collegeId: number, pageNo = 1, identifier = ''): Promise<PageResult<PersonRecord>> {
-    const query = new URLSearchParams({ collegeId: String(collegeId), pageNo: String(pageNo), pageSize: '20' })
+  students(collegeId: number, pageNo = 1, identifier = '', pageSize = 20): Promise<PageResult<PersonRecord>> {
+    const query = new URLSearchParams({ collegeId: String(collegeId), pageNo: String(pageNo), pageSize: String(pageSize) })
     if (identifier.trim()) query.set('identifier', identifier.trim())
     return request(`/admin/students?${query}`)
   },
-  teachers(collegeId: number, pageNo = 1, identifier = ''): Promise<PageResult<PersonRecord>> {
-    const query = new URLSearchParams({ collegeId: String(collegeId), pageNo: String(pageNo), pageSize: '20' })
+  teachers(collegeId: number, pageNo = 1, identifier = '', pageSize = 20): Promise<PageResult<PersonRecord>> {
+    const query = new URLSearchParams({ collegeId: String(collegeId), pageNo: String(pageNo), pageSize: String(pageSize) })
     if (identifier.trim()) query.set('identifier', identifier.trim())
     return request(`/admin/teachers?${query}`)
   },
