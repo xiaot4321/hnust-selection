@@ -1,9 +1,9 @@
 # 师生互选系统物理数据库设计与数据字典
 
-> 版本：0.8（管理员异步导出任务）
-> 状态：原始 0.5 DDL 已应用到本机 MySQL 5.7.36-log 验证库，核验 49 张表和 151 个外键；0.6 增补学院人员导入业务操作关联、导师导入行引用及年度资格唯一当前槽位。对应向前迁移脚本为 [20261003_personnel_management_v1.sql](../sql/mysql57/migrations/20261003_personnel_management_v1.sql)，0.7 完整建库脚本含 50 张表和 158 个外键。2026-10-03 本机首次迁移的结构变更已应用；随后通过 [迁移恢复脚本](../sql/mysql57/migrations/20261003_personnel_management_v1_recovery.sql) 成功写入总管理员学院业务授权和对应审计记录各一条。0.7 将临时凭证到期时间改为可空，`NULL` 表示不设到期时间；本机验证库已于 2026-10-05 执行向前迁移，50 张表和 158 个外键保持不变。0.8 在完整建库 DDL 中增加 `admin_export_job` 表，并提供 [管理员导出任务迁移](../sql/mysql57/migrations/20261005_admin_export_jobs_v1.sql)；该迁移已于 2026-10-05 在本机验证库应用，迁移前备份为 `%TEMP%\hnust_selection_before_admin_export_jobs_20261005_175530.sql`。当前核验为 51 张表和 160 个外键。其他或生产环境执行迁移前须备份并核对回滚方案；本机升级不构成生产部署批准。
-> 更新日期：2026-10-05
-> 基线：[总体需求](../requirements.md) 0.27、[逻辑数据模型](logical-data-model.md) 0.10、[待确认事项登记表](todo-register.md) 3.3 第 6 节。时间存储约定沿用 [API 设计](api-design.md) 1.5 的 UTC 约定。
+> 版本：1.1（年度资格批量维护与历史授权表状态）
+> 状态：本机 MySQL 5.7.36-log 验证库已应用人员管理、凭证、管理员导出、导师公开资料缓存及批次参与授权迁移，当前为 54 张表、167 个外键；参与授权迁移前备份为 `%TEMP%\hnust_selection_before_batch_participant_authorization_20261008.sql`。该迁移现仅保留历史物理表，应用代码不再读写批次参与表或 `supplement_teacher`；完整建库 DDL 仍保留历史表，合计 54 张表、167 个外键。此次决策不运行回滚或删除表，避免丢弃已存在数据。其他/生产环境执行前须核对版本、备份和回滚方案；本机历史升级不构成生产部署批准。
+> 更新日期：2026-10-08
+> 基线：[总体需求](../requirements.md) 0.33、[逻辑数据模型](logical-data-model.md) 0.14、[待确认事项登记表](todo-register.md) 3.7 第 6 节。时间存储约定沿用 [API 设计](api-design.md) 2.0 的 UTC 约定。
 
 ## 1. 范围与设计原则
 
@@ -60,10 +60,11 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | E12 BatchRuleSnapshot | `batch_rule_snapshot` | E13 BatchStage | `batch_stage` |
 | E14 ScheduleRevision | `schedule_revision` | E15 BatchLifecycleEvent | `batch_lifecycle_event` |
 | E16 BatchStudent | `batch_student` | E17 BatchTeacherQuota | `batch_teacher_quota` |
+| 历史批次学生参与授权（非现行业务实体） | `batch_student_participation` | 历史批次导师参与授权（非现行业务实体） | `batch_teacher_participation` |
 | E41 TeacherApplicationScopeVersion | `teacher_application_scope_version` | E42 TeacherAllowedMajor | `teacher_allowed_major` |
 | E18 PreferenceSubmission | `preference_submission` | E19 PreferenceItem | `preference_item` |
 | E20 RoundApplication | `round_application` | E21 SupplementWindow | `supplement_window` |
-| E22 SupplementTeacher | `supplement_teacher` | E23 SupplementApplication | `supplement_application` |
+| 历史补选导师许可（非现行业务实体） | `supplement_teacher` | E23 SupplementApplication | `supplement_application` |
 | E24 MatchingRelation | `matching_relation` | E25 StudentMatchEvent | `student_match_event` |
 | E26 ApplicationEvent | `application_event` | E27 QuotaLedger | `quota_ledger` |
 | E28 RelationAdjustment | `relation_adjustment` | E29 BusinessOperation | `business_operation` |
@@ -96,6 +97,7 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | `teacher` | `account_id BIGINT`, `employee_no VARCHAR(64)`, `full_name VARCHAR(128)`, `college_id BIGINT`, `current_public_profile_version_id BIGINT NULL` | `UNIQUE(employee_no)`, `UNIQUE(account_id)`；公开资料当前指针须属于该导师。 |
 | `student_profile_version` | `student_id BIGINT`, `version_no INTEGER`, `biography TEXT NULL`, `contact_text VARCHAR(255) NULL`, `resume_file_id BIGINT NULL`, `changed_by BIGINT`, `changed_at DATETIME(3)` | `UNIQUE(student_id, version_no)`；FK 至学生、文件、账号；历史版本不可覆盖。 |
 | `teacher_public_profile_version` | `teacher_id BIGINT`, `version_no INTEGER`, `research_directions TEXT NULL`, `biography TEXT NULL`, `review_status VARCHAR(24)`, `submitted_at DATETIME(3)`, `reviewed_by BIGINT NULL`, `reviewed_at DATETIME(3) NULL`, `review_comment TEXT NULL`, `published_at DATETIME(3) NULL` | `UNIQUE(teacher_id, version_no)`；公开目录只读审核通过版本。 |
+| `teacher_official_profile_cache` | `teacher_id BIGINT`, `matched_full_name VARCHAR(128)`, `matched_college_name VARCHAR(128)`, `photo_url VARCHAR(1024) NULL`, `professional_title VARCHAR(128) NULL`, `education_level VARCHAR(64) NULL`, `department VARCHAR(128) NULL`, `teaching_level VARCHAR(128) NULL`, `research_directions TEXT NULL`, `biography TEXT NULL`, `education_experience TEXT NULL`, `work_experience TEXT NULL`, `courses TEXT NULL`, `research_and_achievements TEXT NULL`, `profile_url VARCHAR(1024)`, `cached_at DATETIME(3)` | `PK/FK(teacher_id)`；仅保存按姓名、学院唯一核验的学校门户公开学术资料，不保存电话、邮箱或性别；可丢弃并按 30 天刷新，缓存不能替代管理员审核版本。 |
 | `annual_eligibility` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_status VARCHAR(24)`, `evidence_type VARCHAR(32)`, `evidence_reference TEXT NULL`, `source_name VARCHAR(128) NULL`, `valid_from DATETIME(3) NULL`, `valid_to DATETIME(3) NULL`, `changed_by BIGINT` | FK 至学年/学院/学生/导师；服务端校验 `student_id` 与 `teacher_id` 恰有一个非空；变更追加历史行，旧当前行设置 `valid_to`。状态值为 `ELIGIBLE`/`INELIGIBLE`。 |
 | `annual_eligibility_slot` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_id BIGINT`, `claimed_at DATETIME(3)` | 当前资格投影；`UNIQUE(academic_year_id, student_id)`、`UNIQUE(academic_year_id, teacher_id)`、`UNIQUE(eligibility_id)` 保证每人每学年最多一条当前资格；学生/导师引用恰有一个非空由 Service 校验，人员行锁串行化修改。 |
 | `student_classification_revision` | `student_id BIGINT`, `version_no INTEGER`, `from_major_id BIGINT NULL`, `to_major_id BIGINT`, `from_degree_type VARCHAR(32) NULL`, `to_degree_type VARCHAR(32)`, `basis TEXT`, `reason TEXT`, `changed_by BIGINT`, `changed_at DATETIME(3)`, `correction_request_id BIGINT NULL` | `UNIQUE(student_id, version_no)`；前值可空表示初次导入；受影响批次、志愿与关系处置通过 `student_classification_impact` 逐条关联。 |
@@ -113,6 +115,8 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | `schedule_revision` | `batch_id BIGINT`, `stage_id BIGINT NULL`, `supplement_window_id BIGINT NULL`, `revision_no INTEGER`, `revision_type VARCHAR(24)`, `old_start_at DATETIME(3) NULL`, `old_end_at DATETIME(3) NULL`, `new_start_at DATETIME(3) NULL`, `new_end_at DATETIME(3) NULL`, `relative_start_offset_seconds BIGINT NULL`, `relative_end_offset_seconds BIGINT NULL`, `actor_account_id BIGINT`, `reason TEXT`, `occurred_at DATETIME(3)` | `UNIQUE(batch_id, revision_no)`；阶段与补选窗口恰有一个目标；保存完整修订链而非覆盖原计划。 |
 | `batch_lifecycle_event` | `batch_id BIGINT`, `action_code VARCHAR(32)`, `old_status VARCHAR(24) NULL`, `new_status VARCHAR(24)`, `stage_id BIGINT NULL`, `actor_account_id BIGINT NULL`, `actor_kind VARCHAR(16)`, `reason TEXT NULL`, `occurred_at DATETIME(3)`, `pause_started_at DATETIME(3) NULL`, `pause_ended_at DATETIME(3) NULL`, `frozen_stage_code VARCHAR(24) NULL`, `pause_duration_seconds BIGINT NULL`, `business_operation_id BIGINT NULL` | 追加式生命周期记录；系统主体允许无账号；同批次暂停/恢复区间须成对。 |
 | `batch_student` | `batch_id BIGINT`, `student_id BIGINT`, `eligibility_snapshot VARCHAR(24)`, `account_enabled_snapshot BOOLEAN`, `eligibility_basis TEXT`, `identity_confirmed_at DATETIME(3) NULL`, `confirmed_classification_version INTEGER NULL`, `preference_status VARCHAR(24)`, `current_submission_id BIGINT NULL`, `final_submission_id BIGINT NULL`, `match_status VARCHAR(24) NULL`, `match_reason VARCHAR(40) NULL`, `match_changed_at DATETIME(3) NULL`, `current_relation_id BIGINT NULL`, `roster_correction_note TEXT NULL` | `UNIQUE(batch_id, student_id)`；在填报窗口开启时冻结分母名单；当前状态与事件/关系必须一致。 |
+| `batch_student_participation` | `batch_id BIGINT`, `student_id BIGINT`, `granted_by BIGINT`, `reason TEXT NULL`, `created_at DATETIME(3)` | **历史/停用物理表。** 保留已应用迁移和数据供追溯；当前业务发布、填报冻结、统计不读取/写入此表；批次学生名单由年度资格及账号/学院/关系条件自动生成。不要据此表授权当前批次参与。 |
+| `batch_teacher_participation` | `batch_id BIGINT`, `teacher_id BIGINT`, `granted_by BIGINT`, `reason TEXT NULL`, `created_at DATETIME(3)` | **历史/停用物理表。** 保留已应用迁移和数据供追溯；当前常规流程不读取/写入此表，导师是否进入候选目录按年度资格、账号、公开资料、名额和冻结范围校验。 |
 | `batch_teacher_quota` | `batch_id BIGINT`, `teacher_id BIGINT`, `eligibility_basis TEXT`, `quota_limit INTEGER`, `occupied_count INTEGER` | `UNIQUE(batch_id, teacher_id)`；`0 <= occupied_count <= quota_limit`；剩余数派生；账户更新须与关系/流水同事务，通用 `row_version` 用于并发控制。 |
 | `teacher_application_scope_version` | `batch_id BIGINT`, `teacher_id BIGINT`, `version_no INTEGER`, `allowed_degree_mask SMALLINT`, `configured_by BIGINT`, `configured_at DATETIME(3)`, `frozen_at DATETIME(3) NULL`, `scope_source VARCHAR(24)`, `default_all_applied BOOLEAN` | `UNIQUE(batch_id, teacher_id, version_no)`；学位掩码 1=学硕、2=专硕、3=两者；配置不完整时记录默认全选，冻结后不可普通修改。 |
 | `teacher_allowed_major` | `scope_version_id BIGINT`, `major_id BIGINT`, `major_code_snapshot VARCHAR(32)`, `major_name_snapshot VARCHAR(128)` | `UNIQUE(scope_version_id, major_id)`；不以逗号字符串存专业集合。配置不完整默认全选时，在填报开始冻结范围的事务中按当时目录物化允许专业项，后续目录变化不扩大已冻结集合。 |
@@ -127,7 +131,7 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | `preference_item` | `submission_id BIGINT`, `preference_order SMALLINT`, `batch_teacher_quota_id BIGINT`, `scope_version_id BIGINT`, `classification_version INTEGER`, `major_id BIGINT`, `degree_type VARCHAR(32)` | `UNIQUE(submission_id, preference_order)`, `UNIQUE(submission_id, batch_teacher_quota_id)`；顺位 1–3 连续，范围/身份校验依据固定。 |
 | `round_application` | `batch_student_id BIGINT`, `stage_id BIGINT`, `preference_item_id BIGINT`, `teacher_id BIGINT`, `application_status VARCHAR(32)`, `close_reason VARCHAR(40) NULL`, `entered_review_at DATETIME(3) NULL`, `decided_at DATETIME(3) NULL`, `execution_cycle INTEGER`, `sort_submitted_at DATETIME(3) NULL`, `sort_student_no VARCHAR(64) NULL`, `active_snapshot_id BIGINT NULL` | `UNIQUE(preference_item_id)` 表示一个锁定志愿项一条当前申请；重开以 `execution_cycle` 和事件历史表示。记录应可验证 `stage` 对应志愿顺位。 |
 | `supplement_window` | `batch_id BIGINT`, `stage_id BIGINT`, `planned_start_at DATETIME(3)`, `planned_end_at DATETIME(3)`, `effective_start_at DATETIME(3)`, `effective_end_at DATETIME(3)`, `actual_started_at DATETIME(3) NULL`, `actual_closed_at DATETIME(3) NULL`, `window_status VARCHAR(24)`, `close_reason VARCHAR(32) NULL` | `UNIQUE(batch_id)`；发布前计划配置；关闭后不得重开，关闭待处理申请并完成批次。 |
-| `supplement_teacher` | `supplement_window_id BIGINT`, `batch_teacher_quota_id BIGINT`, `permission_version INTEGER`, `allowed_from DATETIME(3)`, `revoked_at DATETIME(3) NULL`, `granted_by BIGINT`, `reason TEXT NULL` | `UNIQUE(supplement_window_id, batch_teacher_quota_id, permission_version)`；每次重新许可追加版本，最高版本且未撤销者表示当前许可；名额和范围仍单独检查。 |
+| `supplement_teacher` | `supplement_window_id BIGINT`, `batch_teacher_quota_id BIGINT`, `permission_version INTEGER`, `allowed_from DATETIME(3)`, `revoked_at DATETIME(3) NULL`, `granted_by BIGINT`, `reason TEXT NULL` | **历史/停用物理表。** 旧版补选名单许可记录保留；当前补选目录不读取/写入该表，而是按年度资格、账号、公开资料、剩余名额与冻结招生范围自动计算候选。 |
 | `supplement_application` | `batch_student_id BIGINT`, `supplement_window_id BIGINT`, `teacher_id BIGINT`, `batch_teacher_quota_id BIGINT`, `application_status VARCHAR(24)`, `close_reason VARCHAR(32) NULL`, `submitted_at DATETIME(3)`, `decided_by BIGINT NULL`, `decided_at DATETIME(3) NULL`, `sort_submitted_at DATETIME(3)`, `sort_student_no VARCHAR(64)`, `active_snapshot_id BIGINT NULL` | 每次申请独立留存；同一学生待处理唯一由 `student_pending_supplement_slot` 保证；录取时不允许仅改申请状态而不建关系。 |
 | `application_profile_snapshot` | `round_application_id BIGINT NULL`, `supplement_application_id BIGINT NULL`, `execution_cycle INTEGER`, `captured_at DATETIME(3)`, `capture_reason VARCHAR(24)`, `full_name VARCHAR(128)`, `student_no VARCHAR(64)`, `major_id BIGINT`, `major_name_snapshot VARCHAR(128)`, `degree_type VARCHAR(32)`, `biography TEXT NULL`, `resume_file_id BIGINT NULL` | 服务端校验常规申请与补选申请外键恰有一个非空；常规重开每周期新快照，补选提交时建快照；禁止联系方式/成绩字段。当前访问仍即时鉴权。 |
 | `application_event` | `object_type VARCHAR(24)`, `object_id BIGINT`, `execution_cycle INTEGER NULL`, `action_code VARCHAR(32)`, `old_status VARCHAR(32) NULL`, `new_status VARCHAR(32) NULL`, `close_reason VARCHAR(40) NULL`, `actor_kind VARCHAR(16)`, `actor_account_id BIGINT NULL`, `occurred_at DATETIME(3)`, `business_operation_id BIGINT NULL`, `detail_text TEXT NULL` | 追加式事件；对象引用为通用类型/ID，应用按对象类型校验。区分导师不录取、超时、名额不足、时间跳过、身份纠错跳过、匹配跳过、取消和重开。 |
@@ -166,7 +170,8 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 |---|---|
 | `account(login_identifier)` UNIQUE；`student(student_no)` UNIQUE；`teacher(employee_no)` UNIQUE | 登录标识和人员业务标识唯一。 |
 | `batch_running_slot(college_id, academic_year_id)` PK | 线性化同学院同学年运行批次的发布占位；终态释放，暂停保留。 |
-| `batch_student(batch_id, student_id)` UNIQUE；`batch_teacher_quota(batch_id, teacher_id)` UNIQUE；`batch_stage(batch_id, stage_code)` UNIQUE | 批次参与人、名额账户和阶段单一。 |
+| 历史索引：`batch_student_participation(batch_id, student_id)` UNIQUE；`batch_teacher_participation(batch_id, teacher_id)` UNIQUE | 仅保护历史物理表行唯一；不作为现行参与授权规则或应用查询来源。 |
+| `batch_student(batch_id, student_id)` UNIQUE；`batch_teacher_quota(batch_id, teacher_id)` UNIQUE；`batch_stage(batch_id, stage_code)` UNIQUE | 冻结后批次学生、名额账户和阶段单一。 |
 | `preference_submission(batch_student_id, version_no)` UNIQUE；`preference_item(submission_id, preference_order)` UNIQUE；`preference_item(submission_id, batch_teacher_quota_id)` UNIQUE | 保留多个完整版本，同时禁止版本内重复顺位/导师。 |
 | `round_application(preference_item_id)` UNIQUE；`application_profile_snapshot(round_application_id, execution_cycle)` UNIQUE（非空常规申请侧） | 一个锁定志愿项对应唯一当前常规申请，每处理周期快照可追溯。 |
 | `student_year_match_slot(student_id, academic_year_id)` PK | 跨批次同学年有效关系唯一；槽位与 `matching_relation`、名额余额同事务维护。 |
@@ -197,12 +202,12 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | 操作 | 原子写集合与并发保护 |
 |---|---|
 | 发布/撤回发布批次 | 发布时校验必需阶段/补选计划、规则快照及时间，插入 `batch_running_slot`；按已确认规则撤回发布时释放槽位并回到 DRAFT。更新批次状态并写生命周期/审计/业务操作。槽位主键冲突表示已有运行批次。 |
-| 冻结学生名单 | 填报窗口开始时读取符合资格名单并排除学年已有有效关系者，写 `batch_student`；固定名单与分母，后续更正须单独授权留痕。 |
-| 提交志愿 | 锁定阶段行后读取数据库 UTC 时间，按 `[startAt,endAt)` 校验填报窗口；再检查账号、身份确认版本、导师范围和资格。插入完整 `preference_submission` 与 1–3 条 `preference_item`；更新批次学生当前版本指针并写事件/操作/审计。任何校验失败整笔回滚；截止前通过校验的事务可以在截止后提交（TODO-50）。 |
+| 冻结学生名单 | 填报窗口开始时，按当前年度 `ELIGIBLE`、账号启用、学院一致且无同学年有效关系的条件自动筛选学生，写入 `batch_student`；固定实际名单与统计分母，后续更正须单独授权留痕。不读取历史 `batch_student_participation` 表（TODO-68）。 |
+| 提交志愿 | 锁定阶段行后读取数据库 UTC 时间，按 `[startAt,endAt)` 校验填报窗口；再检查账号、年度资格、身份确认版本、导师年度资格与冻结范围。插入完整 `preference_submission` 与 1–3 条 `preference_item`；更新批次学生当前版本指针并写事件/操作/审计。任何校验失败整笔回滚；截止前通过校验的事务可以在截止后提交（TODO-50）。 |
 | 导师录取（常规或补选） | 每项办理在独立事务内锁定阶段行并按数据库 UTC 时间校验窗口，再校验申请、学生状态/范围/资格和名额；需要读取并协调多行状态时由 Mapper 用 `SELECT ... FOR UPDATE` 锁定相应行。以唯一键占用 `student_year_match_slot`，并通过带条件更新确保名额仍有余额；建立 LOCKED 关系，更新批次学生、名额并写 `quota_ledger`、状态/申请事件、操作、审计及站内通知收件记录。任何唯一键冲突、条件更新影响行数不符或业务校验失败都回滚该项事务。 |
 | 名额控制 | 对 `batch_teacher_quota` 做带 `row_version` 的条件更新，要求 `occupied_count < quota_limit`；名额调整须 `new_limit >= occupied_count`。受影响行数为 0 表示额度或版本已变化，Service 重新读取并按业务规则返回冲突；使用 InnoDB 行锁/条件更新，按稳定顺序获取多行锁并对幂等操作有限重试。独立批量操作无全局 FIFO；竞争最后名额时由先获得名额行锁并成功提交的操作取得（TODO-51）。 |
 | 撤销/恢复/改派关系 | 与关系状态、学年槽位、旧/新导师名额、两侧名额流水、匹配状态、纠错记录、审计和通知同事务；改派整体成功或整体失败。 |
-| 补选申请 | 校验窗口、UNMATCHED、资格/范围/许可/名额及同年关系；先成功占用 `student_pending_supplement_slot` 再提交申请和资料快照；不预扣名额。结案时释放槽位。 |
+| 补选申请 | 校验窗口、UNMATCHED、学生资格、导师年度资格/账号/资料/冻结范围/名额及同年关系；不查独立导师许可名单。先成功占用 `student_pending_supplement_slot` 再提交申请和资料快照；不预扣名额。结案时释放槽位。 |
 | 暂停/恢复/重开/关闭阶段 | 更新批次及阶段、时间修订、生命周期与相关申请事件；批量结案可分片执行，但须具备幂等键/游标，阶段完全结案前不可宣告关闭。补选关闭时最终将批次置为 COMPLETED。 |
 | 身份纠错 | 追加分类版本并更新学生当前分类；重新核验受影响批次。填报开始后按已确认规则处理已有关系、释放名额、设为 UNMATCHED 并跳过剩余常规轮次；与录取操作使用同一学生/关系并发保护。 |
 

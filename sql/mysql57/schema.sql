@@ -1,5 +1,5 @@
 -- HNNUST faculty-student selection system: MySQL 5.7.36 bootstrap DDL
--- Generated from docs/database-design.md v0.7 (50 tables).
+-- Generated from docs/database-design.md v1.0 (54 tables, 167 foreign keys).
 -- Fresh schema only. This script does not DROP existing databases, tables, or data.
 -- Assumptions for first execution: schema hnust_selection; utf8mb4_unicode_ci.
 -- Review identifier case/collation and the FK list before applying to production.
@@ -205,6 +205,30 @@ CREATE TABLE `annual_eligibility` (
   KEY `ix_annual_eligibility_student_id` (`student_id`),
   KEY `ix_annual_eligibility_teacher_id` (`teacher_id`),
   KEY `ix_annual_eligibility_changed_by` (`changed_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
+
+CREATE TABLE `teacher_official_profile_cache` (
+  `teacher_id` BIGINT NOT NULL,
+  `matched_full_name` VARCHAR(128) NOT NULL,
+  `matched_college_name` VARCHAR(128) NOT NULL,
+  `photo_url` VARCHAR(1024) NULL,
+  `professional_title` VARCHAR(128) NULL,
+  `education_level` VARCHAR(64) NULL,
+  `department` VARCHAR(128) NULL,
+  `teaching_level` VARCHAR(128) NULL,
+  `research_directions` TEXT NULL,
+  `biography` TEXT NULL,
+  `education_experience` TEXT NULL,
+  `work_experience` TEXT NULL,
+  `courses` TEXT NULL,
+  `research_and_achievements` TEXT NULL,
+  `profile_url` VARCHAR(1024) NOT NULL,
+  `cached_at` DATETIME(3) NOT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `row_version` BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`teacher_id`),
+  KEY `ix_teacher_official_profile_cache_cached_at` (`cached_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
 -- The slot points to the one current history row; all prior qualification rows remain append-only history.
@@ -446,6 +470,32 @@ CREATE TABLE `batch_student` (
   KEY `ix_batch_student_current_submission_id` (`current_submission_id`),
   KEY `ix_batch_student_final_submission_id` (`final_submission_id`),
   KEY `ix_batch_student_current_relation_id` (`current_relation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
+
+CREATE TABLE `batch_student_participation` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `batch_id` BIGINT NOT NULL,
+  `student_id` BIGINT NOT NULL,
+  `granted_by` BIGINT NOT NULL,
+  `reason` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_batch_student_participation_batch_student` (`batch_id`, `student_id`),
+  KEY `ix_batch_student_participation_student_id` (`student_id`),
+  KEY `ix_batch_student_participation_granted_by` (`granted_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
+
+CREATE TABLE `batch_teacher_participation` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `batch_id` BIGINT NOT NULL,
+  `teacher_id` BIGINT NOT NULL,
+  `granted_by` BIGINT NOT NULL,
+  `reason` TEXT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_batch_teacher_participation_batch_teacher` (`batch_id`, `teacher_id`),
+  KEY `ix_batch_teacher_participation_teacher_id` (`teacher_id`),
+  KEY `ix_batch_teacher_participation_granted_by` (`granted_by`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
 CREATE TABLE `batch_teacher_quota` (
@@ -1018,6 +1068,7 @@ ALTER TABLE `student_profile_version` ADD CONSTRAINT `fk_student_profile_version
 ALTER TABLE `student_profile_version` ADD CONSTRAINT `fk_student_profile_version_resume_file_id` FOREIGN KEY (`resume_file_id`) REFERENCES `managed_file` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `student_profile_version` ADD CONSTRAINT `fk_student_profile_version_changed_by` FOREIGN KEY (`changed_by`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `teacher_public_profile_version` ADD CONSTRAINT `fk_teacher_public_profile_version_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `teacher_official_profile_cache` ADD CONSTRAINT `fk_teacher_official_profile_cache_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `teacher_public_profile_version` ADD CONSTRAINT `fk_teacher_public_profile_version_reviewed_by` FOREIGN KEY (`reviewed_by`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `annual_eligibility` ADD CONSTRAINT `fk_annual_eligibility_academic_year_id` FOREIGN KEY (`academic_year_id`) REFERENCES `academic_year` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `annual_eligibility` ADD CONSTRAINT `fk_annual_eligibility_college_id` FOREIGN KEY (`college_id`) REFERENCES `college` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
@@ -1060,6 +1111,12 @@ ALTER TABLE `batch_lifecycle_event` ADD CONSTRAINT `fk_batch_lifecycle_event_act
 ALTER TABLE `batch_lifecycle_event` ADD CONSTRAINT `fk_batch_lifecycle_event_business_operation_id` FOREIGN KEY (`business_operation_id`) REFERENCES `business_operation` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `batch_student` ADD CONSTRAINT `fk_batch_student_batch_id` FOREIGN KEY (`batch_id`) REFERENCES `selection_batch` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `batch_student` ADD CONSTRAINT `fk_batch_student_student_id` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `batch_student_participation` ADD CONSTRAINT `fk_batch_student_participation_batch_id` FOREIGN KEY (`batch_id`) REFERENCES `selection_batch` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `batch_student_participation` ADD CONSTRAINT `fk_batch_student_participation_student_id` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `batch_student_participation` ADD CONSTRAINT `fk_batch_student_participation_granted_by` FOREIGN KEY (`granted_by`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `batch_teacher_participation` ADD CONSTRAINT `fk_batch_teacher_participation_batch_id` FOREIGN KEY (`batch_id`) REFERENCES `selection_batch` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `batch_teacher_participation` ADD CONSTRAINT `fk_batch_teacher_participation_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `batch_teacher_participation` ADD CONSTRAINT `fk_batch_teacher_participation_granted_by` FOREIGN KEY (`granted_by`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `batch_student` ADD CONSTRAINT `fk_batch_student_current_submission_id` FOREIGN KEY (`current_submission_id`) REFERENCES `preference_submission` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `batch_student` ADD CONSTRAINT `fk_batch_student_final_submission_id` FOREIGN KEY (`final_submission_id`) REFERENCES `preference_submission` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `batch_student` ADD CONSTRAINT `fk_batch_student_current_relation_id` FOREIGN KEY (`current_relation_id`) REFERENCES `matching_relation` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;

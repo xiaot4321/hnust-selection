@@ -6,39 +6,43 @@
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| [总体需求](../requirements.md) | 范围、角色、流程、功能、共性约束和决策索引 | 0.29 师生凭证重置权限/API 范围待确认 |
-| [分轮业务规则](business-rules.md) | 已确认匹配规则、例外处理及冲突记录 | 0.18 常规关系恢复与改派边界 |
+| [总体需求](../requirements.md) | 范围、角色、流程、功能、共性约束和决策索引 | 0.33 年度资格批量维护与自动补选候选 |
+| [分轮业务规则](business-rules.md) | 已确认匹配规则、例外处理及冲突记录 | 0.21 年度资格和补选候选规则 |
 | [状态机设计](state-machine.md) | 批次、阶段、志愿、学生状态、申请和关系状态 | 0.14 常规关系恢复与改派边界 |
-| [权限矩阵](permission-matrix.md) | 角色权限、数据范围、敏感字段访问 | 1.7 师生凭证重置授权范围待确认 |
-| [用户故事](user-stories.md) | 角色场景、验收目标和实现/验证状态 | 2.0 当前实现与验收状态 |
-| [待确认事项登记表](todo-register.md) | 待确认事项与已确认决策的统一登记，含数据设计输入约束 | 3.5 决策记录；TODO-49 特殊边界暂缓，TODO-50 至 TODO-64 已确认，TODO-65 待确认 |
-| [逻辑数据模型](logical-data-model.md) | 核心实体关系图、属性、唯一性、状态归属、事务、历史与访问边界 | 0.11 常规关系恢复与改派事务边界；TODO-49 特殊边界暂缓 |
-| [物理数据库设计与数据字典](database-design.md) | 逻辑实体到 MySQL/InnoDB 表的映射、字段类型、约束、索引和事务并发设计 | 0.8 管理员异步导出任务；目标 MySQL 5.7.36 |
-| [MySQL 5.7.36 完整建库 DDL](../sql/mysql57/schema.sql) | 51 张表、主键、唯一键、索引及 160 个外键的首次建库脚本 | 新库含管理员导出任务表；本机验证库已迁移至 51/160；其他环境部署须准备迁移/回滚方案 |
+| [权限矩阵](permission-matrix.md) | 角色权限、数据范围、敏感字段访问 | 2.0 年度资格批量维护与自动补选候选 |
+| [用户故事](user-stories.md) | 角色场景、验收目标和实现/验证状态 | 2.3 年度资格批量维护与自动补选候选 |
+| [待确认事项登记表](todo-register.md) | 待确认事项与已确认决策的统一登记，含数据设计输入约束 | 3.7 决策记录；TODO-49 特殊边界暂缓，TODO-64/66/67 已被 TODO-68 取代，TODO-65 待确认 |
+| [逻辑数据模型](logical-data-model.md) | 核心实体关系图、属性、唯一性、状态归属、事务、历史与访问边界 | 0.14 年度资格与自动补选候选；TODO-49 特殊边界暂缓 |
+| [物理数据库设计与数据字典](database-design.md) | 逻辑实体到 MySQL/InnoDB 表的映射、字段类型、约束、索引和事务并发设计 | 1.1；历史授权表保留、当前不读写；目标 MySQL 5.7.36 |
+| [MySQL 5.7.36 完整建库 DDL](../sql/mysql57/schema.sql) | 54 张表、主键、唯一键、索引及 167 个外键的首次建库脚本 | 包含导师公开资料缓存及历史批次参与授权表；本机验证库迁移后为 54/167；历史授权表不参与当前业务 |
 | [MySQL 前向迁移](../sql/mysql57/migrations/20261003_personnel_management_v1.sql) | 为旧版本机验证库添加资格唯一当前槽位、导入关联及总管理员人员能力 | 2026-10-03 本机结构变更已应用；不得对已迁移库重跑完整迁移 |
 | [人员管理迁移恢复脚本](../sql/mysql57/migrations/20261003_personnel_management_v1_recovery.sql) | 修复本机迁移中因 MySQL 会话字符集导致失败的总管理员授权及审计记录 | 2026-10-03 本机恢复成功；授权和审计各写入一行；脚本可重复执行，仅适用于已部分应用 v1 结构的验证库 |
 | [凭证取消到期迁移](../sql/mysql57/migrations/20261005_credential_expiry_removal_v1.sql) | 将凭证到期时间改为可空，并清除仍未使用/未撤销凭证的到期时间 | 2026-10-05 已应用到本机验证库；预先备份，3 条凭证中清除 1 条未消费凭证到期时间，50 张表和 158 个外键保持不变 |
 | [凭证取消到期回滚脚本](../sql/mysql57/migrations/20261005_credential_expiry_removal_v1_rollback.sql) | 按签发时间恢复 72 小时到期规则 | 仅用于明确的回滚；执行后已超过 72 小时的未用凭证将不可用 |
 | [管理员导出任务迁移](../sql/mysql57/migrations/20261005_admin_export_jobs_v1.sql) | 为现有数据库新增管理员异步导出任务表 | 2026-10-05 已应用到本机验证库；执行前备份为 `%TEMP%\hnust_selection_before_admin_export_jobs_20261005_175530.sql`，迁移后 51 张表、160 个外键；其他环境执行前核对版本和回滚方案 |
-| [功能模块设计](functional-modules.md) | 学生、导师、管理端功能清单、模块职责、数据归属、模块协作及当前代码入口 | 0.16 互选实现状态盘点 |
-| [API 设计](api-design.md) | 端点目录、请求/响应契约、错误码、认证授权、幂等和并发语义 | 1.7 登记师生凭证重置接口缺口；TODO-65 待确认 |
+| [官方导师资料缓存迁移](../sql/mysql57/migrations/20261008_teacher_official_profile_cache_v1.sql) | 为现有数据库新增学校官网公开资料缓存表 | 已应用于本机验证库；库为 52/161，其他环境执行前核对结构、备份和回滚 |
+| [批次参与授权迁移](../sql/mysql57/migrations/20261008_batch_participant_authorization_v1.sql) | 曾新增批次学生授权和常规导师授权表，并为既有已发布批次回填兼容名单 | 已备份并应用于本机验证库；现为历史/停用结构，代码不再读写；不要为配合业务变更执行回滚，除非另行评估数据和恢复方案 |
+| [批次参与授权回滚脚本](../sql/mysql57/migrations/20261008_batch_participant_authorization_v1_rollback.sql) | 删除批次学生和常规导师参与授权表 | 仅为原迁移历史提供；会删除两表全部数据，本次决策不执行 |
+| [功能模块设计](functional-modules.md) | 学生、导师、管理端功能清单、模块职责、数据归属、模块协作及当前代码入口 | 0.19 年度资格批量维护与自动补选候选 |
+| [API 设计](api-design.md) | 端点目录、请求/响应契约、错误码、认证授权、幂等和并发语义 | 2.0 年度资格批量维护与自动补选候选；TODO-65 待确认 |
+| [邮箱绑定与密码找回](email-recovery.md) | 师生邮箱验证、找回密码接口、安全限制和 SMTP 部署要求 | 师生自助流程已接入；管理员代重置师生凭证的范围仍待 TODO-65 确认 |
 
 ## 当前代码实现状态
 
-根目录 [README](../README.md) 提供本机运行方法；`backend/` 是 Spring Boot 后端，`frontend/` 是 Vue + TypeScript + Vite 前端。下表是截至 2026-10-07 对当前工作树的代码入口盘点。“已接入”表示相应 HTTP/API、业务服务和页面入口可在代码中定位；它不等同于端到端验收通过、生产部署完成或所有规则边界都已实现。
+根目录 [README](../README.md) 提供本机运行方法；`backend/` 是 Spring Boot 后端，`frontend/` 是 Vue + TypeScript + Vite 前端。下表是截至 2026-10-08 对当前工作树的代码入口盘点。“已接入”表示相应 HTTP/API、业务服务和页面入口可在代码中定位；它不等同于端到端验收通过、生产部署完成或所有规则边界都已实现。
 
 | 使用方 | 当前已接入的主要能力 | 主要代码入口（按任务从入口继续追调用链） |
 |---|---|---|
-| 学生 | 本人批次/进度/志愿历史和结果查询；导师目录；身份确认；1–3 位有序志愿提交、撤回与历史；补选申请；本人资料/简历；身份更正申请；站内通知。服务端写操作处理本人身份、批次阶段、幂等、分类版本和冻结范围校验。 | 后端 `StudentBatchController`、`StudentProgressController`、`StudentSelectionQueryController`、`StudentPreferenceMutationController`、`StudentSupplementMutationController`、`StudentPreferenceMutationServiceImpl`；前端 `StudentWorkspace.vue`、`studentPortalService.ts`。 |
-| 导师 | 本人公开资料与招生范围配置；常规轮次和补选队列；逐项与异步批量决定；本人名额/匹配关系查询；站内联系；授权范围内受控简历读取。匹配写入联动关系、名额、学生状态、事件和审计。 | 后端 `TeacherWorkspaceController`、`TeacherWorkspaceServiceImpl`、`TeacherApplicationScopeController`；前端 `TeacherWorkspace.vue`、`teacherWorkspaceService.ts`。 |
-| 管理员 | 学生/导师人员及年度资格、名单导入；管理员能力授权；学生身份纠错；导师资料审核；批次草稿、排期、发布、生命周期、导师范围/名额、轮次延期/重开和补选配置；关系查询及撤销/恢复/改派；冻结统计、审计和异步导出；`BATCH_AUDIT` 只读范围。关系变更要求原因并使用版本/幂等检查，按服务实现执行事务校验。 | 后端 `PersonnelManagementController`、`AdminIdentityCorrectionController`、`AdminTeacherProfileReviewController`、`SelectionBatchManagementController`、`AdminRelationAdjustmentController`、`AdminExportController`；前端 `components/admin/` 与 `services/` 对应模块。 |
+| 学生 | 本人批次/进度/志愿历史和结果查询；导师目录；身份确认；1–3 位有序志愿提交、撤回与历史；填报页直接浏览并选择本人可报导师，查看官方公开资料缓存及来源；补选申请；本人资料/简历；身份更正申请；站内通知；邮箱绑定与邮件验证码找回密码。服务端写操作处理本人身份、批次阶段、幂等、分类版本和冻结范围校验。 | 后端 `TeacherDirectoryController`、`TeacherDirectoryServiceImpl`、`OfficialFacultyProfileLookupService`、`EmailRecoveryController`；前端 `StudentWorkspace.vue`、`EmailSecurityPanel.vue`、`ForgotPasswordPanel.vue` 和对应 `services/`。 |
+| 导师 | 本人公开资料与招生范围配置；常规轮次和补选队列；逐项与异步批量决定；本人名额/匹配关系查询；站内联系；授权范围内受控简历读取；邮箱绑定与邮件验证码找回密码。匹配写入联动关系、名额、学生状态、事件和审计。 | 后端 `TeacherWorkspaceController`、`TeacherWorkspaceServiceImpl`、`TeacherApplicationScopeController`、`EmailRecoveryController`；前端 `TeacherWorkspace.vue`、`EmailSecurityPanel.vue`、`ForgotPasswordPanel.vue` 和对应 `services/`。 |
+| 管理员 | 学生/导师人员及年度资格关键词筛选、多选和批量保存、名单导入；管理员能力授权；学生身份纠错；导师资料审核；批次草稿、排期、发布、生命周期、导师范围/名额、轮次延期/重开和补选排期；关系查询及撤销/恢复/改派；冻结统计、审计和异步导出；`BATCH_AUDIT` 只读范围。发布无需批次参与授权名单；补选导师候选按资格、公开资料、名额和冻结范围自动计算。 | 后端 `PersonnelManagementController`、`AdminIdentityCorrectionController`、`AdminTeacherProfileReviewController`、`SelectionBatchManagementController`、`AdminRelationAdjustmentController`、`AdminExportController`；前端 `components/admin/` 与 `services/` 对应模块。 |
 
 ### 尚未实现、暂缓或未验证的事项
 
 - **TODO-49 特殊边界暂缓：** 启动时跳过填报阶段而缺少可验证冻结范围；无补选、补选已关闭或批次完成时的身份纠错路径；因身份纠错或缺少冻结范围产生的关系恢复/改派。常规关系恢复只处理 `RELATION_REVOKED` 来源，常规改派须校验已冻结范围和名额；TODO-49 请求由服务端拒绝，不能把“常规关系调整已接入”扩写成“所有异常边界已实现”。
-- **密码找回：** 没有自助“忘记密码”页面、接口或恢复渠道。当前 `/auth/password-change` 要求已登录账号提交当前正式密码或一次性临时凭证；总管理员可重置其他普通 ADMIN 的临时凭证。用户故事要求管理员可重置师生遗忘的凭证，但角色/学院范围及 API 尚未确定（TODO-65），当前代码也未提供学生/导师账号重置端点。
+- **邮箱与密码找回：** 学生/导师邮箱绑定、验证码验证和登录页邮箱找回已有页面与后端接口；发信依赖 SMTP 配置，验证码仅经邮件发送。管理员重置师生凭证的角色/学院范围及 API 仍待确认（TODO-65）；总管理员重置其他普通 ADMIN 的凭证继续使用管理端流程。接口、验证码策略和部署配置见 [邮箱绑定与密码找回](email-recovery.md)。
 - **文件安全：** 学生 PDF 上传接口及私有文件访问/存储代码已存在，但恶意文件扫描器的集成和部署环境接线仍待落实；上传文件在扫描通过前不可作为已安全可访问文件处理。
-- **环境与运行验证：** 本机 MySQL 5.7.36 验证库已应用管理员导出任务迁移，现为 51 张表、160 个外键；这不代表其他或生产环境已迁移。部署前仍须核对学校认证要求、数据库兼容性、私有存储与扫描、迁移/回滚、备份恢复及批量压测。
+- **环境与运行验证：** 本机 MySQL 5.7.36 验证库已应用导师公开资料缓存和批次参与授权迁移，现为 54 张表、167 个外键；批次参与授权表现保留为历史结构，当前代码不读写。迁移前备份位于 `%TEMP%\hnust_selection_before_batch_participant_authorization_20261008.sql`。学校门户动态查询请求仍需联调；其他或生产环境未因此迁移。部署前仍须核对学校认证要求、数据库兼容性、私有存储与扫描、迁移/回滚、备份恢复及批量压测。
 - **自动化验收覆盖：** 当前后端测试目录盘点到 9 个测试文件，范围包括认证/授权、启动初始化、批次管理、人员注册/导入、导入解析和异常处理；没有专门覆盖学生志愿提交、导师轮次决定、补选、关系/名额并发调整的测试文件。前端未发现 `test`/`spec` 文件。此为测试源码盘点，不表示本次运行过测试或既有测试已通过。
 
 功能清单及验收边界见 [功能模块设计](functional-modules.md) 与 [用户故事](user-stories.md)。API 文档规定契约；代码状态和测试覆盖须另外核对，不能仅凭设计文档推断实现完成。
@@ -93,10 +97,13 @@
 | 2026-10-05 | 按业务方指令备份本机验证库并执行管理员导出任务迁移，核验 51 张表、160 个外键及空任务表 | `sql/mysql57/migrations/20261005_admin_export_jobs_v1.sql`、`sql/mysql57/README.md`、数据库设计及本文件 |
 | 2026-10-05 | 按业务方要求实现常规关系恢复与改派：恢复仅处理关系撤销来源，改派依据已冻结可报范围及双方名额；身份纠错、迟启动无冻结依据等 TODO-49 特殊边界继续拒绝，无需数据库结构变更 | requirements 0.28；logical-data-model 0.11；business-rules 0.18；state-machine 0.14；user-stories 1.9；functional-modules 0.15；api-design 1.6；todo-register 3.4；本文件 |
 | 2026-10-07 | 统一仓库文档的代码实现状态：更新学生/导师/管理员链路入口、TODO-49 限制、TODO-65 师生凭证重置权限/API 缺口、自助找回/文件扫描缺口、自动化测试盘点和目标环境验证边界 | README、AGENTS、项目总览；requirements 0.29；todo-register 3.5；permission-matrix 1.7；functional-modules 0.16；user-stories 2.0；api-design 1.7；logical-data-model、本文件 |
+| 2026-10-08 | 学生志愿页直接展示本人可填报导师并可就地排序；目录改为姓名筛选，导师详情扩展学校公开主页照片、职称、经历、课程、科研成果及来源；增加按姓名/学院核验的可重建缓存表和前向/回滚迁移。已备份并应用本机缓存迁移，核验 52 张表、161 个外键；官网动态查询请求契约仍需联调 | frontend、backend；requirements 0.30；permission-matrix 1.8；user-stories 2.1；functional-modules 0.17；logical-data-model 0.12；database-design 0.9；api-design 1.8；SQL migration、schema、本文件 |
+| 2026-10-08 | 批次草稿新增学生与常规导师复选授权及筛选/全选操作；空名单时界面弹窗并阻止发布，发布服务再次校验；填报窗口仅冻结仍合格的已授权学生作为名单和统计分母，常规导师授权与补选名单分开管理。新增两张授权表、完整 DDL、向前/回滚迁移及 TODO-66 规则；迁移前备份并应用于本机验证库，核验 54 张表、167 个外键 | frontend、backend；requirements 0.31；business-rules 0.19；permission-matrix 1.9；user-stories 2.2；functional-modules 0.18；logical-data-model 0.13；database-design 1.0；api-design 1.9；todo-register 3.6；SQL migration、schema、本文件 |
+| 2026-10-08 | 随后按 TODO-68 调整规则：年度资格保留并在管理端支持关键词检索、跨页复选和批量设置；移除批次参与授权流程及独立补选导师名单，填报学生按年度资格等条件自动冻结，补选候选按年度资格、公开资料、名额和冻结范围自动生成。删除相应应用端点、页面区块和运行查询；已应用迁移表保留为历史物理结构，不执行回滚/删表。 | frontend、backend、requirements 0.33、business-rules 0.21、permission-matrix 2.0、user-stories 2.3、functional-modules 0.19、logical-data-model 0.14、database-design 1.1、api-design 2.0、todo-register 3.7、本文件 |
 
 ## 后续实现与部署工作
 
-逻辑数据模型、状态机、权限矩阵、用户故事、功能模块、物理数据库设计和已定案 API 契约均已按现有内容定案；`TODO-01` 至 `TODO-48`、`TODO-50` 至 `TODO-64` 已确认并同步，TODO-39 与 TODO-07 的冲突按方案 B 解决，TODO-49 特殊边界继续暂缓，TODO-65 记录师生凭证重置的授权/API 契约缺口并待确认。主要师生互选链路已接入前后端代码；下一阶段应按用户故事补足核心业务的自动化验收和运行验证，而不是将现有流程重新标成未实现。轮次重开和常规关系恢复/改派复用既有表字段，不新增数据库结构。
+逻辑数据模型、状态机、权限矩阵、用户故事、功能模块、物理数据库设计和已定案 API 契约均已按现行决定更新；`TODO-01` 至 `TODO-48`、`TODO-50` 至 `TODO-63`、`TODO-68` 已确认并同步，TODO-64/66/67 是由 TODO-68 取代的历史决定，TODO-39 与 TODO-07 的冲突按方案 B 解决，TODO-49 特殊边界继续暂缓，TODO-65 记录师生凭证重置的授权/API 契约缺口并待确认。主要师生互选链路已接入前后端代码；学校教师门户动态检索请求尚待联调，导师公开资料缓存与批次参与授权迁移已应用于本机验证库，后者的表已停用但保留数据。其他环境实施前仍须核对目标版本、备份和回滚方案。核心业务自动化验收和运行验证仍待补齐。轮次重开和常规关系恢复/改派复用既有表字段，不新增数据库结构。
 
 1. **补齐功能缺口与验收：** 先由业务方确认 TODO-65 中师生凭证重置的执行角色与数据范围，再补齐 API/实现；自助找回渠道目前没有设计。为志愿、逐轮决定、补选、关系/名额原子更新补充正常、权限、状态、重复请求、截止边界及并发测试；完成浏览器端到端验收。TODO-49 仍须等待业务方决策后才能扩展。
 2. **完成文件安全接线：** 在部署环境落实恶意文件扫描与私有存储服务；确认上传文件只有扫描通过后才可受控读取，并核验访问审计。
