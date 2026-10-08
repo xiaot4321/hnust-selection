@@ -436,54 +436,6 @@ public class SelectionBatchRepository {
             oldStart == null ? "INITIAL" : "ADJUSTMENT", oldStart, oldEnd, start, end, actorId, reason);
     }
 
-    /** 返回当前未撤销许可的版本号；调用方已在事务中锁定批次。 */
-    public Map<Long, Integer> currentSupplementTeacherPermissions(Long batchId) {
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT quota.teacher_id, permission.permission_version " +
-            "FROM supplement_window window JOIN batch_teacher_quota quota ON quota.batch_id = window.batch_id " +
-            "JOIN supplement_teacher permission ON permission.supplement_window_id = window.id " +
-            "AND permission.batch_teacher_quota_id = quota.id AND permission.permission_version = " +
-            "(SELECT MAX(latest.permission_version) FROM supplement_teacher latest " +
-            "WHERE latest.supplement_window_id = window.id AND latest.batch_teacher_quota_id = quota.id) " +
-            "WHERE window.batch_id = ? AND permission.revoked_at IS NULL ORDER BY quota.teacher_id", batchId);
-        Map<Long, Integer> result = new java.util.LinkedHashMap<Long, Integer>();
-        for (Map<String, Object> row : rows) result.put(((Number) row.get("teacher_id")).longValue(),
-            ((Number) row.get("permission_version")).intValue());
-        return result;
-    }
-
-    /** 更新许可时锁定补选窗口；每次重新授权追加版本，不覆盖被撤销的历史版本。 */
-    public void replaceSupplementTeacherPermissions(Long batchId, Set<Long> teacherIds, Long actorId, String reason) {
-        Long windowId;
-        String windowStatus;
-        List<Map<String, Object>> windows = jdbc.queryForList("SELECT id, window_status FROM supplement_window " +
-            "WHERE batch_id = ? FOR UPDATE", batchId);
-        if (windows.isEmpty()) throw new IllegalStateException("supplement window missing");
-        windowId = ((Number) windows.get(0).get("id")).longValue();
-        windowStatus = String.valueOf(windows.get(0).get("window_status"));
-        if ("CLOSED".equals(windowStatus)) throw new IllegalStateException("supplement window closed");
-
-        Map<Long, Integer> current = currentSupplementTeacherPermissions(batchId);
-        for (Map.Entry<Long, Integer> entry : current.entrySet()) {
-            if (!teacherIds.contains(entry.getKey())) {
-                jdbc.update("UPDATE supplement_teacher SET revoked_at = UTC_TIMESTAMP(3), row_version = row_version + 1 " +
-                    "WHERE supplement_window_id = ? AND batch_teacher_quota_id = " +
-                    "(SELECT id FROM batch_teacher_quota WHERE batch_id = ? AND teacher_id = ?) " +
-                    "AND permission_version = ? AND revoked_at IS NULL", windowId, batchId, entry.getKey(), entry.getValue());
-            }
-        }
-        for (Long teacherId : teacherIds) {
-            if (current.containsKey(teacherId)) continue;
-            Integer latest = jdbc.queryForObject("SELECT COALESCE(MAX(permission_version), 0) FROM supplement_teacher " +
-                "WHERE supplement_window_id = ? AND batch_teacher_quota_id = " +
-                "(SELECT id FROM batch_teacher_quota WHERE batch_id = ? AND teacher_id = ?)",
-                Integer.class, windowId, batchId, teacherId);
-            jdbc.update("INSERT INTO supplement_teacher(supplement_window_id, batch_teacher_quota_id, " +
-                "permission_version, allowed_from, granted_by, reason) SELECT ?, id, ?, UTC_TIMESTAMP(3), ?, ? " +
-                "FROM batch_teacher_quota WHERE batch_id = ? AND teacher_id = ?", windowId,
-                (latest == null ? 0 : latest.intValue()) + 1, actorId, reason, batchId, teacherId);
-        }
-    }
-
     public void incrementBatchVersion(Long batchId) {
         jdbc.update("UPDATE selection_batch SET row_version = row_version + 1 WHERE id = ?", batchId);
     }

@@ -11,6 +11,8 @@ import cn.hnust.selection.service.TeacherDirectoryService;
 import cn.hnust.selection.vo.AllowedMajorVO;
 import cn.hnust.selection.vo.TeacherDirectoryDetailVO;
 import cn.hnust.selection.vo.TeacherDirectoryItemVO;
+import cn.hnust.selection.vo.TeacherOfficialProfileVO;
+import cn.hnust.selection.entity.TeacherOfficialProfileCacheEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,9 +27,12 @@ import java.util.Optional;
 @Service
 public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
     private final TeacherDirectoryRepository repository;
+    private final OfficialFacultyProfileLookupService officialProfileLookup;
 
-    public TeacherDirectoryServiceImpl(TeacherDirectoryRepository repository) {
+    public TeacherDirectoryServiceImpl(TeacherDirectoryRepository repository,
+        OfficialFacultyProfileLookupService officialProfileLookup) {
         this.repository = repository;
+        this.officialProfileLookup = officialProfileLookup;
     }
 
     @Override
@@ -46,17 +51,25 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         List<TeacherRow> rows = repository.findTeachers(batchId, studentId, normalizedKeyword,
             normalizedDirection, majorId, degreeBit, canApply, pageNo, pageSize);
         List<Long> scopeIds = new ArrayList<Long>();
-        for (TeacherRow row : rows) scopeIds.add(row.getScopeVersionId());
+        List<Long> teacherIds = new ArrayList<Long>();
+        for (TeacherRow row : rows) {
+            scopeIds.add(row.getScopeVersionId());
+            teacherIds.add(row.getTeacherId());
+        }
         Map<Long, List<AllowedMajorVO>> majorsByScope = repository.findAllowedMajors(scopeIds);
+        Map<Long, TeacherOfficialProfileCacheEntity> officialByTeacher = officialProfileLookup.cachedProfiles(teacherIds);
         List<TeacherDirectoryItemVO> items = new ArrayList<TeacherDirectoryItemVO>();
-        for (TeacherRow row : rows) items.add(toItem(row, majorsByScope.get(row.getScopeVersionId())));
+        for (TeacherRow row : rows) {
+            TeacherOfficialProfileVO official = officialProfileLookup.cachedProfile(officialByTeacher.get(row.getTeacherId()),
+                row.getFullName(), row.getCollegeName());
+            items.add(toItem(row, majorsByScope.get(row.getScopeVersionId()), official));
+        }
         long total = repository.countTeachers(batchId, studentId, normalizedKeyword,
             normalizedDirection, majorId, degreeBit, canApply);
         return new PageResult<TeacherDirectoryItemVO>(items, total, pageNo, pageSize);
     }
 
     @Override
-    @Transactional(readOnly = true)
     public TeacherDirectoryDetailVO get(AccountPrincipal actor, Long batchId, Long teacherId) {
         Long studentId = requireStudent(actor);
         validatePositive(batchId, "batchId");
@@ -64,9 +77,10 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         requireContext(batchId, studentId);
         TeacherRow row = repository.findTeacher(batchId, studentId, teacherId)
             .orElseThrow(() -> notFound("未找到该批次可查看的导师资料"));
+        TeacherOfficialProfileVO official = officialProfileLookup.getOrRefresh(row.getTeacherId(), row.getFullName(), row.getCollegeName());
         TeacherDirectoryDetailVO result = new TeacherDirectoryDetailVO();
-        copy(toItem(row, repository.findAllowedMajors(row.getScopeVersionId())), result);
-        result.setBiography(row.getBiography() == null ? "" : row.getBiography());
+        copy(toItem(row, repository.findAllowedMajors(row.getScopeVersionId()), official), result);
+        result.setBiography(firstNonBlank(row.getBiography(), official == null ? null : official.getBiography()));
         return result;
     }
 
@@ -83,16 +97,22 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         return context;
     }
 
-    private TeacherDirectoryItemVO toItem(TeacherRow row, List<AllowedMajorVO> allowedMajors) {
+    private TeacherDirectoryItemVO toItem(TeacherRow row, List<AllowedMajorVO> allowedMajors,
+        TeacherOfficialProfileVO official) {
         TeacherDirectoryItemVO result = new TeacherDirectoryItemVO();
         result.setTeacherId(row.getTeacherId());
         result.setEmployeeNo(row.getEmployeeNo());
         result.setDisplayName(row.getFullName());
-        result.setResearchDirections(splitDirections(row.getResearchDirections()));
-        result.setProfileSummary(row.getBiography() == null ? "" : row.getBiography());
+        List<String> directions = splitDirections(row.getResearchDirections());
+        if (directions.isEmpty() && official != null && official.getResearchDirections() != null) {
+            directions = official.getResearchDirections();
+        }
+        result.setResearchDirections(directions);
+        result.setProfileSummary(firstNonBlank(row.getBiography(), official == null ? null : official.getBiography()));
         result.setAllowedDegreeTypes(degreeTypes(row.getDegreeMask().intValue()));
         result.setAllowedMajors(allowedMajors == null ? Collections.<AllowedMajorVO>emptyList() : allowedMajors);
         result.setCanApply(row.isCanApply());
+        result.setOfficialProfile(official);
         return result;
     }
 
@@ -105,6 +125,7 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         target.setAllowedDegreeTypes(source.getAllowedDegreeTypes());
         target.setAllowedMajors(source.getAllowedMajors());
         target.setCanApply(source.isCanApply());
+        target.setOfficialProfile(source.getOfficialProfile());
     }
 
     private List<String> splitDirections(String value) {
@@ -115,6 +136,10 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
             if (!normalized.isEmpty() && !result.contains(normalized)) result.add(normalized);
         }
         return result;
+    }
+
+    private String firstNonBlank(String preferred, String fallback) {
+        return preferred == null || preferred.trim().isEmpty() ? (fallback == null ? "" : fallback) : preferred;
     }
 
     private List<String> degreeTypes(int mask) {

@@ -15,7 +15,6 @@ import cn.hnust.selection.request.CreateSelectionBatchRequest;
 import cn.hnust.selection.request.ExtendRoundRequest;
 import cn.hnust.selection.request.ReopenRoundRequest;
 import cn.hnust.selection.request.SetTeacherApplicationScopeRequest;
-import cn.hnust.selection.request.SetSupplementTeachersRequest;
 import cn.hnust.selection.request.SetTeacherQuotaRequest;
 import cn.hnust.selection.request.UpdateSelectionBatchRequest;
 import cn.hnust.selection.security.AccountAuthorization;
@@ -33,7 +32,6 @@ import cn.hnust.selection.vo.SelectionBatchDetailVO;
 import cn.hnust.selection.vo.SelectionBatchSummaryVO;
 import cn.hnust.selection.vo.TeacherApplicationScopeVO;
 import cn.hnust.selection.vo.TeacherScopeBatchOptionVO;
-import cn.hnust.selection.vo.SupplementTeacherVO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
@@ -672,79 +670,6 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
     private BatchStageVO findStage(List<BatchStageVO> stages, String code) {
         for (BatchStageVO stage : stages) if (code.equals(stage.getStageCode())) return stage;
         return null;
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<SupplementTeacherVO> listSupplementTeachers(AccountPrincipal actor, Long batchId) {
-        SelectionBatchEntity batch = requireBatch(batchId);
-        requireBatchReader(actor, batch);
-        if (!batch.isSupplementPlanned()) throw stateConflict("该批次未安排补选窗口");
-        return supplementTeacherViews(batch);
-    }
-
-    @Override
-    @Transactional
-    public List<SupplementTeacherVO> setSupplementTeachers(AccountPrincipal actor, Long batchId,
-        SetSupplementTeachersRequest request, long expectedVersion, String idempotencyKey) {
-        if (request == null || request.getTeacherIds() == null) throw invalidArgument("缺少补选导师名单");
-        if (request.getTeacherIds().size() != new HashSet<Long>(request.getTeacherIds()).size()) {
-            throw invalidArgument("补选导师名单不能重复");
-        }
-        String key = requireIdempotencyKey(idempotencyKey);
-        AccountPrincipal current = lockAndRefresh(actor, ADMIN);
-        SelectionBatchEntity batch = lockBatch(batchId);
-        requireBatchManager(current, batch);
-        requireVersion(batch.getRowVersion(), expectedVersion);
-        if (!batch.isSupplementPlanned()) throw stateConflict("该批次未安排补选窗口");
-        if (!("DRAFT".equals(batch.getStatus()) || "SCHEDULED".equals(batch.getStatus()) ||
-            "ACTIVE".equals(batch.getStatus()) || "PAUSED".equals(batch.getStatus()))) {
-            throw stateConflict("当前批次状态不允许调整补选导师");
-        }
-        String windowStatus = repository.supplementWindowStatus(batchId);
-        if (windowStatus == null) throw stateConflict("请先配置补选窗口排期");
-        if ("CLOSED".equals(windowStatus) || "NOT_SCHEDULED".equals(windowStatus)) {
-            throw stateConflict("补选窗口关闭后不能调整导师名单");
-        }
-        Set<Long> desired = new LinkedHashSet<Long>();
-        for (Long teacherId : request.getTeacherIds()) {
-            if (teacherId == null || teacherId.longValue() <= 0) throw invalidArgument("导师 ID 必须为正数");
-            desired.add(teacherId);
-        }
-        List<BatchTeacherQuotaVO> eligibleRows = repository.listTeacherQuotas(batchId, batch.getCollegeId(), batch.getAcademicYearId());
-        Set<Long> eligible = new HashSet<Long>();
-        for (BatchTeacherQuotaVO row : eligibleRows) if (row.getQuotaLimit() != null) eligible.add(row.getTeacherId());
-        if (!eligible.containsAll(desired)) throw invalidArgument("名单包含不属于本批次有效导师目录的导师");
-        String reason = trim(request.getReason());
-        List<Long> sortedIds = new ArrayList<Long>(desired);
-        Collections.sort(sortedIds);
-        String fingerprint = fingerprint("SUPPLEMENT_TEACHERS", batchId, sortedIds, reason, expectedVersion);
-        if (replay(current.getAccountId(), "BATCH_SUPPLEMENT_TEACHERS_SET", key, fingerprint).isPresent()) {
-            return supplementTeacherViews(batch);
-        }
-        Map<Long, Integer> before = repository.currentSupplementTeacherPermissions(batchId);
-        long operationId = repository.insertOperation(current.getAccountId(), ADMIN,
-            "BATCH_SUPPLEMENT_TEACHERS_SET", batch.getCollegeId(), batchId, key, fingerprint);
-        repository.replaceSupplementTeacherPermissions(batchId, desired, current.getAccountId(), reason);
-        repository.incrementBatchVersion(batchId);
-        Map<Long, Integer> after = repository.currentSupplementTeacherPermissions(batchId);
-        repository.insertAudit(current.getAccountId(), ADMIN, ADMIN, scopeBasis(batch.getCollegeId(), batchId),
-            "SUPPLEMENT_TEACHER_LIST", batchId, "BATCH_SUPPLEMENT_TEACHERS_SET", snapshot("teachers", before),
-            snapshot("teachers", after), reason, operationId);
-        repository.completeOperation(operationId);
-        return supplementTeacherViews(batch);
-    }
-
-    private List<SupplementTeacherVO> supplementTeacherViews(SelectionBatchEntity batch) {
-        Map<Long, Integer> permissions = repository.currentSupplementTeacherPermissions(batch.getId());
-        List<BatchTeacherQuotaVO> quotas = repository.listTeacherQuotas(batch.getId(), batch.getCollegeId(), batch.getAcademicYearId());
-        List<SupplementTeacherVO> result = new ArrayList<SupplementTeacherVO>();
-        for (BatchTeacherQuotaVO quota : quotas) {
-            Integer version = permissions.get(quota.getTeacherId());
-            result.add(new SupplementTeacherVO(quota.getTeacherId(), quota.getEmployeeNo(), quota.getFullName(),
-                version != null, version, quota.getQuotaLimit(), quota.getOccupiedCount(), quota.getRemainingCount()));
-        }
-        return result;
     }
 
     private Map<String, SchedulePoint> schedulePoints(List<BatchStageVO> stages) {

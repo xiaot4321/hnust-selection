@@ -11,6 +11,7 @@ public class TeacherDirectoryItemVO {
     private List<String> allowedDegreeTypes;
     private List<AllowedMajorVO> allowedMajors;
     private boolean canApply;
+    private TeacherOfficialProfileVO officialProfile;
 
     public Long getTeacherId() { return teacherId; }
     public void setTeacherId(Long teacherId) { this.teacherId = teacherId; }
@@ -28,4 +29,6 @@ public class TeacherDirectoryItemVO {
     public void setAllowedMajors(List<AllowedMajorVO> allowedMajors) { this.allowedMajors = allowedMajors; }
     public boolean isCanApply() { return canApply; }
     public void setCanApply(boolean canApply) { this.canApply = canApply; }
+    public TeacherOfficialProfileVO getOfficialProfile() { return officialProfile; }
+    public void setOfficialProfile(TeacherOfficialProfileVO officialProfile) { this.officialProfile = officialProfile; }
 }

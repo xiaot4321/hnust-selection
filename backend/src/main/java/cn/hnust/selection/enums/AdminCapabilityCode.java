@@ -11,7 +11,7 @@ package cn.hnust.selection.enums;
  * 应急恢复流程维护，永远不能通过普通授予/撤销 API 变更。</p>
  */
 public enum AdminCapabilityCode {
-    /** 在授权学院范围内维护学生、导师、专业目录和年度资格。 */
+    /** 在授权学院范围内维护学生、导师、专业目录和人员名单导入。 */
     COLLEGE_ADMIN,
     /** 在授权学院/批次范围内创建和管理互选批次、排期及导师名额。 */
     BATCH_MANAGER,

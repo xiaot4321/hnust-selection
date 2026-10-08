@@ -271,12 +271,18 @@ public class TeacherWorkspaceRepository {
         return rows.isEmpty() ? Optional.<SupplementContext>empty() : Optional.of(rows.get(0));
     }
 
-    public boolean hasSupplementPermissionAtSubmission(Long windowId, Long quotaId, java.sql.Timestamp submittedAt) {
-        List<Long> rows = jdbc.query("SELECT permission.id FROM supplement_teacher permission WHERE " +
-            "permission.supplement_window_id = ? AND permission.batch_teacher_quota_id = ? " +
-            "AND permission.allowed_from <= ? AND (permission.revoked_at IS NULL OR ? < permission.revoked_at) " +
-            "ORDER BY permission.permission_version DESC LIMIT 1 FOR UPDATE", (rs, n) -> rs.getLong(1),
-            windowId, quotaId, submittedAt, submittedAt);
+    public boolean hadSupplementEligibilityAtSubmission(Long windowId, Long quotaId, java.sql.Timestamp submittedAt) {
+        List<Long> rows = jdbc.query("SELECT eligibility.id FROM supplement_window window " +
+            "JOIN selection_batch batch ON batch.id = window.batch_id " +
+            "JOIN batch_teacher_quota quota ON quota.id = ? AND quota.batch_id = batch.id " +
+            "JOIN teacher ON teacher.id = quota.teacher_id AND teacher.college_id = batch.college_id " +
+            "JOIN annual_eligibility eligibility ON eligibility.academic_year_id = batch.academic_year_id " +
+            "AND eligibility.college_id = batch.college_id AND eligibility.teacher_id = teacher.id " +
+            "AND eligibility.student_id IS NULL AND eligibility.eligibility_status = 'ELIGIBLE' " +
+            "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= ?) " +
+            "AND (eligibility.valid_to IS NULL OR ? < eligibility.valid_to) " +
+            "WHERE window.id = ? FOR UPDATE", (rs, n) -> rs.getLong(1),
+            quotaId, submittedAt, submittedAt, windowId);
         return !rows.isEmpty();
     }
 
@@ -452,21 +458,26 @@ public class TeacherWorkspaceRepository {
             "AND supplement_window_id IN (SELECT id FROM supplement_window WHERE batch_id = ?)", Long.class, teacherId, batchId);
         return count == null ? 0L : count.longValue();
     }
-    public boolean hasOpenSupplementPermission(Long teacherId, Long batchId) {
+    public boolean hasSupplementWorkAccess(Long teacherId, Long batchId) {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM batch_teacher_quota quota " +
             "JOIN supplement_window window ON window.batch_id = quota.batch_id " +
+            "JOIN selection_batch batch ON batch.id = quota.batch_id " +
             "WHERE window.batch_id = ? AND quota.teacher_id = ? AND window.window_status = 'OPEN' " +
             "AND window.effective_start_at <= UTC_TIMESTAMP(3) AND UTC_TIMESTAMP(3) < window.effective_end_at " +
-            "AND (EXISTS (SELECT 1 FROM supplement_teacher permission WHERE permission.supplement_window_id = window.id " +
-            "AND permission.batch_teacher_quota_id = quota.id AND permission.permission_version = " +
-            "(SELECT MAX(latest.permission_version) FROM supplement_teacher latest " +
-            "WHERE latest.supplement_window_id = window.id AND latest.batch_teacher_quota_id = quota.id) " +
-            "AND permission.revoked_at IS NULL) OR EXISTS (SELECT 1 FROM supplement_application application " +
-            "JOIN supplement_teacher historic ON historic.supplement_window_id = application.supplement_window_id " +
-            "AND historic.batch_teacher_quota_id = application.batch_teacher_quota_id " +
+            "AND (EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
+            "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+            "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+            "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3)) " +
+            "WHERE eligibility_slot.academic_year_id = batch.academic_year_id " +
+            "AND eligibility_slot.college_id = batch.college_id AND eligibility_slot.teacher_id = quota.teacher_id) " +
+            "OR EXISTS (SELECT 1 FROM supplement_application application " +
+            "JOIN annual_eligibility historic ON historic.academic_year_id = batch.academic_year_id " +
+            "AND historic.college_id = batch.college_id AND historic.teacher_id = quota.teacher_id " +
+            "AND historic.student_id IS NULL AND historic.eligibility_status = 'ELIGIBLE' " +
+            "AND (historic.valid_from IS NULL OR historic.valid_from <= application.submitted_at) " +
+            "AND (historic.valid_to IS NULL OR application.submitted_at < historic.valid_to) " +
             "WHERE application.supplement_window_id = window.id AND application.batch_teacher_quota_id = quota.id " +
-            "AND application.application_status = 'IN_REVIEW' AND historic.allowed_from <= application.submitted_at " +
-            "AND (historic.revoked_at IS NULL OR application.submitted_at < historic.revoked_at)))", Integer.class,
+            "AND application.application_status = 'IN_REVIEW'))", Integer.class,
             batchId, teacherId);
         return count != null && count.intValue() > 0;
     }

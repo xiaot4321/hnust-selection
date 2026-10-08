@@ -1,6 +1,7 @@
 package cn.hnust.selection.repository;
 
 import cn.hnust.selection.vo.AllowedMajorVO;
+import cn.hnust.selection.entity.TeacherOfficialProfileCacheEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -26,14 +27,9 @@ public class TeacherDirectoryRepository {
         "AND participant.confirmed_classification_version = student.classification_version) " +
         "OR (participant.match_status = 'UNMATCHED' " +
         "AND EXISTS (SELECT 1 FROM supplement_window supplement " +
-        "JOIN supplement_teacher permission ON permission.supplement_window_id = supplement.id " +
-        "AND permission.batch_teacher_quota_id = quota.id " +
-        "AND permission.permission_version = (SELECT MAX(permission_latest.permission_version) " +
-        "FROM supplement_teacher permission_latest WHERE permission_latest.supplement_window_id = permission.supplement_window_id " +
-        "AND permission_latest.batch_teacher_quota_id = permission.batch_teacher_quota_id) " +
         "WHERE supplement.batch_id = batch.id AND supplement.window_status = 'OPEN' " +
         "AND supplement.effective_start_at <= UTC_TIMESTAMP(3) AND UTC_TIMESTAMP(3) < supplement.effective_end_at " +
-        "AND permission.revoked_at IS NULL AND permission.allowed_from <= UTC_TIMESTAMP(3)) " +
+        ") " +
         "AND quota.occupied_count < quota.quota_limit " +
         "AND NOT EXISTS (SELECT 1 FROM student_pending_supplement_slot pending WHERE pending.student_id = student.id) " +
         "AND NOT EXISTS (SELECT 1 FROM student_year_match_slot relation_slot WHERE relation_slot.student_id = student.id " +
@@ -45,6 +41,7 @@ public class TeacherDirectoryRepository {
         "JOIN account student_account ON student_account.id = student.account_id " +
         "JOIN batch_teacher_quota quota ON quota.batch_id = batch.id " +
         "JOIN teacher ON teacher.id = quota.teacher_id AND teacher.college_id = batch.college_id " +
+        "JOIN college teacher_college ON teacher_college.id = teacher.college_id " +
         "JOIN account teacher_account ON teacher_account.id = teacher.account_id " +
         "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
         "AND profile.teacher_id = teacher.id " +
@@ -52,6 +49,12 @@ public class TeacherDirectoryRepository {
         "JOIN teacher_application_scope_version scope ON scope.id = slot.scope_version_id " +
         "AND scope.batch_id = batch.id AND scope.teacher_id = teacher.id " +
         "WHERE batch.id = ? AND teacher_account.account_status = 'ACTIVE' AND profile.published_at IS NOT NULL " +
+        "AND EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
+        "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+        "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+        "WHERE eligibility_slot.academic_year_id = batch.academic_year_id " +
+        "AND eligibility_slot.college_id = batch.college_id AND eligibility_slot.teacher_id = teacher.id " +
+        "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3))) " +
         "AND slot.frozen_at IS NOT NULL AND scope.frozen_at IS NOT NULL ";
 
     private final JdbcTemplate jdbcTemplate;
@@ -75,7 +78,7 @@ public class TeacherDirectoryRepository {
 
     public List<TeacherRow> findTeachers(Long batchId, Long studentId, String keyword, String researchDirection,
         Long majorId, Integer degreeBit, Boolean canApply, int pageNo, int pageSize) {
-        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, " +
+        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
             "profile.research_directions, profile.biography, scope.allowed_degree_mask, slot.scope_version_id, ");
         sql.append("CASE WHEN ").append(CAN_APPLY).append(" THEN 1 ELSE 0 END AS can_apply");
         sql.append(FROM_AND_WHERE);
@@ -88,7 +91,7 @@ public class TeacherDirectoryRepository {
         args.add(Long.valueOf(((long) pageNo - 1L) * pageSize));
         return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
             rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
-            rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
+            rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
             rs.getLong("scope_version_id"), rs.getBoolean("can_apply")), args.toArray());
     }
 
@@ -104,13 +107,13 @@ public class TeacherDirectoryRepository {
     }
 
     public Optional<TeacherRow> findTeacher(Long batchId, Long studentId, Long teacherId) {
-        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, " +
+        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
             "profile.research_directions, profile.biography, scope.allowed_degree_mask, slot.scope_version_id, ");
         sql.append("CASE WHEN ").append(CAN_APPLY).append(" THEN 1 ELSE 0 END AS can_apply");
         sql.append(FROM_AND_WHERE).append(" AND teacher.id = ?");
         List<TeacherRow> rows = jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
             rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
-            rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
+            rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
             rs.getLong("scope_version_id"), rs.getBoolean("can_apply")), studentId, batchId, teacherId);
         return rows.isEmpty() ? Optional.<TeacherRow>empty() : Optional.of(rows.get(0));
     }
@@ -152,9 +155,8 @@ public class TeacherDirectoryRepository {
     private void appendFilters(StringBuilder sql, List<Object> args, String keyword, String researchDirection,
                                Long majorId, Integer degreeBit, Boolean canApply) {
         if (keyword != null && !keyword.isEmpty()) {
-            sql.append(" AND (teacher.full_name LIKE ? OR teacher.employee_no LIKE ?)");
+            sql.append(" AND teacher.full_name LIKE ?");
             String pattern = "%" + keyword + "%";
-            args.add(pattern);
             args.add(pattern);
         }
         if (researchDirection != null && !researchDirection.isEmpty()) {
@@ -204,20 +206,23 @@ public class TeacherDirectoryRepository {
         private final Long teacherId;
         private final String employeeNo;
         private final String fullName;
+        private final String collegeName;
         private final String researchDirections;
         private final String biography;
         private final Integer degreeMask;
         private final Long scopeVersionId;
         private final boolean canApply;
-        public TeacherRow(Long teacherId, String employeeNo, String fullName, String researchDirections,
+        public TeacherRow(Long teacherId, String employeeNo, String fullName, String collegeName, String researchDirections,
             String biography, Integer degreeMask, Long scopeVersionId, boolean canApply) {
             this.teacherId = teacherId; this.employeeNo = employeeNo; this.fullName = fullName;
+            this.collegeName = collegeName;
             this.researchDirections = researchDirections; this.biography = biography; this.degreeMask = degreeMask;
             this.scopeVersionId = scopeVersionId; this.canApply = canApply;
         }
         public Long getTeacherId() { return teacherId; }
         public String getEmployeeNo() { return employeeNo; }
         public String getFullName() { return fullName; }
+        public String getCollegeName() { return collegeName; }
         public String getResearchDirections() { return researchDirections; }
         public String getBiography() { return biography; }
         public Integer getDegreeMask() { return degreeMask; }

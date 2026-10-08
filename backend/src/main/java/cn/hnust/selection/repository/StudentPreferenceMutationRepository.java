@@ -111,7 +111,14 @@ public class StudentPreferenceMutationRepository {
                 "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
                 "WHERE quota.batch_id = ? AND quota.teacher_id = ? AND slot.frozen_at IS NOT NULL " +
                 "AND scope.frozen_at IS NOT NULL AND teacher_account.account_status = 'ACTIVE' " +
-                "AND profile.published_at IS NOT NULL",
+                "AND profile.published_at IS NOT NULL " +
+                "AND EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
+                "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+                "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+                "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3)) " +
+                "WHERE eligibility_slot.academic_year_id = batch.academic_year_id " +
+                "AND eligibility_slot.college_id = batch.college_id " +
+                "AND eligibility_slot.teacher_id = teacher.id)",
             (rs, rowNum) -> new TeacherScope(rs.getLong("quota_id"), rs.getLong("scope_version_id"),
                 rs.getInt("allowed_degree_mask"), rs.getBoolean("major_allowed")), majorId, batchId, teacherId);
         return rows.isEmpty() ? Optional.<TeacherScope>empty() : Optional.of(rows.get(0));

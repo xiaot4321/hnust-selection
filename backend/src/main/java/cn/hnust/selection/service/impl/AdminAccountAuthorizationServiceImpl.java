@@ -117,7 +117,7 @@ public class AdminAccountAuthorizationServiceImpl implements AdminAccountAuthori
 
         String capabilityCode = validateGrantableCapability(request.getCapabilityCode());
         if ("COLLEGE_ADMIN".equals(capabilityCode) && request.getBatchId() != null) {
-            // 学院人员与资格管理是学院级范围；批次授权无法安全覆盖人员档案与年度资格数据。
+            // 学院人员、专业目录和名单导入是学院级范围；批次授权不能扩大为全学院人员维护权限。
             throw invalidArgument("COLLEGE_ADMIN 必须授予整个学院范围，不能限定到单个批次");
         }
         AccountPrincipal currentActor = refreshAndValidateActor(actor, true);

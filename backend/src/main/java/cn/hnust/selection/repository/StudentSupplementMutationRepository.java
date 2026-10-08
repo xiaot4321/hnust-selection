@@ -81,13 +81,11 @@ public class StudentSupplementMutationRepository {
         return !rows.isEmpty();
     }
 
-    public Optional<PermittedTeacher> findPermittedTeacher(Long batchId, Long windowId, Long teacherId,
-                                                           Long majorId, Timestamp now) {
+    public Optional<EligibleTeacher> findEligibleTeacher(Long batchId, Long windowId, Long teacherId,
+                                                         Long majorId, Timestamp now) {
         String sql = "SELECT quota.id AS quota_id, quota.teacher_id, quota.occupied_count, quota.quota_limit, " +
             "scope.allowed_degree_mask, slot.scope_version_id, teacher.full_name AS teacher_name, teacher.employee_no, " +
-            "EXISTS (SELECT 1 FROM teacher_allowed_major allowed WHERE allowed.scope_version_id = slot.scope_version_id AND allowed.major_id = ?) AS major_allowed, " +
-            "CASE WHEN permission.id IS NOT NULL AND permission.revoked_at IS NULL AND permission.allowed_from <= ? " +
-            "THEN 1 ELSE 0 END AS permission_active " +
+            "EXISTS (SELECT 1 FROM teacher_allowed_major allowed WHERE allowed.scope_version_id = slot.scope_version_id AND allowed.major_id = ?) AS major_allowed " +
             "FROM batch_teacher_quota quota " +
             "JOIN teacher_application_scope_slot slot ON slot.batch_id = quota.batch_id AND slot.teacher_id = quota.teacher_id " +
             "JOIN teacher_application_scope_version scope ON scope.id = slot.scope_version_id " +
@@ -97,20 +95,21 @@ public class StudentSupplementMutationRepository {
             "JOIN account teacher_account ON teacher_account.id = teacher.account_id " +
             "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
             "AND profile.teacher_id = teacher.id " +
-            "LEFT JOIN supplement_teacher permission ON permission.supplement_window_id = ? " +
-            "AND permission.batch_teacher_quota_id = quota.id " +
-            "AND permission.permission_version = (SELECT MAX(permission_latest.permission_version) " +
-            "FROM supplement_teacher permission_latest WHERE permission_latest.supplement_window_id = permission.supplement_window_id " +
-            "AND permission_latest.batch_teacher_quota_id = permission.batch_teacher_quota_id) " +
+            "JOIN supplement_window window ON window.id = ? AND window.batch_id = batch.id " +
+            "JOIN annual_eligibility_slot eligibility_slot ON eligibility_slot.academic_year_id = batch.academic_year_id " +
+            "AND eligibility_slot.college_id = batch.college_id AND eligibility_slot.teacher_id = teacher.id " +
+            "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+            "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+            "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= ?) " +
             "WHERE quota.batch_id = ? AND quota.teacher_id = ? AND slot.frozen_at IS NOT NULL " +
             "AND scope.frozen_at IS NOT NULL AND teacher_account.account_status = 'ACTIVE' " +
             "AND profile.published_at IS NOT NULL FOR UPDATE";
-        List<PermittedTeacher> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new PermittedTeacher(
+        List<EligibleTeacher> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new EligibleTeacher(
             rs.getLong("quota_id"), rs.getLong("teacher_id"), rs.getString("teacher_name"),
             rs.getString("employee_no"), rs.getBoolean("major_allowed"), rs.getInt("allowed_degree_mask"),
-            rs.getLong("scope_version_id"), rs.getInt("occupied_count"), rs.getInt("quota_limit"),
-            rs.getBoolean("permission_active")), majorId, now, windowId, batchId, teacherId);
-        return rows.isEmpty() ? Optional.<PermittedTeacher>empty() : Optional.of(rows.get(0));
+            rs.getLong("scope_version_id"), rs.getInt("occupied_count"), rs.getInt("quota_limit")),
+            majorId, windowId, now, batchId, teacherId);
+        return rows.isEmpty() ? Optional.<EligibleTeacher>empty() : Optional.of(rows.get(0));
     }
 
     public Optional<Operation> findOperation(Long accountId, String requestId) {
@@ -165,7 +164,7 @@ public class StudentSupplementMutationRepository {
         return Long.valueOf(id.longValue());
     }
 
-    public Long insertApplication(Long batchStudentId, Long windowId, PermittedTeacher teacher, String studentNo) {
+    public Long insertApplication(Long batchStudentId, Long windowId, EligibleTeacher teacher, String studentNo) {
         KeyHolder holder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
@@ -337,7 +336,7 @@ public class StudentSupplementMutationRepository {
         public Long getResumeFileId() { return resumeFileId; }
     }
 
-    public static class PermittedTeacher {
+    public static class EligibleTeacher {
         private final Long quotaId;
         private final Long teacherId;
         private final String teacherName;
@@ -347,11 +346,9 @@ public class StudentSupplementMutationRepository {
         private final Long scopeVersionId;
         private final int occupied;
         private final int quotaLimit;
-        private final boolean permissionActive;
 
-        public PermittedTeacher(Long quotaId, Long teacherId, String teacherName, String employeeNo,
-            boolean majorAllowed, int degreeMask, Long scopeVersionId, int occupied, int quotaLimit,
-            boolean permissionActive) {
+        public EligibleTeacher(Long quotaId, Long teacherId, String teacherName, String employeeNo,
+            boolean majorAllowed, int degreeMask, Long scopeVersionId, int occupied, int quotaLimit) {
             this.quotaId = quotaId;
             this.teacherId = teacherId;
             this.teacherName = teacherName;
@@ -361,7 +358,6 @@ public class StudentSupplementMutationRepository {
             this.scopeVersionId = scopeVersionId;
             this.occupied = occupied;
             this.quotaLimit = quotaLimit;
-            this.permissionActive = permissionActive;
         }
         public Long getQuotaId() { return quotaId; }
         public Long getTeacherId() { return teacherId; }
@@ -372,7 +368,6 @@ public class StudentSupplementMutationRepository {
         public Long getScopeVersionId() { return scopeVersionId; }
         public int getOccupied() { return occupied; }
         public int getQuotaLimit() { return quotaLimit; }
-        public boolean isPermissionActive() { return permissionActive; }
     }
 
     public static class Operation {

@@ -7,7 +7,6 @@ import cn.hnust.selection.request.ExtendRoundRequest;
 import cn.hnust.selection.request.ReopenRoundRequest;
 import cn.hnust.selection.request.CreateSelectionBatchRequest;
 import cn.hnust.selection.request.SetTeacherQuotaRequest;
-import cn.hnust.selection.request.SetSupplementTeachersRequest;
 import cn.hnust.selection.request.UpdateSelectionBatchRequest;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.SelectionBatchManagementService;
@@ -19,7 +18,6 @@ import cn.hnust.selection.vo.CollegeOptionVO;
 import cn.hnust.selection.vo.MajorVO;
 import cn.hnust.selection.vo.SelectionBatchDetailVO;
 import cn.hnust.selection.vo.SelectionBatchSummaryVO;
-import cn.hnust.selection.vo.SupplementTeacherVO;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -197,28 +195,6 @@ public class SelectionBatchManagementController {
         SelectionBatchDetailVO result = service.reopenRound(actor, batchId, roundNo, request,
             parseVersion(ifMatch, "batch"), idempotencyKey);
         return ResponseEntity.ok().eTag("batch-" + result.getBatch().getRowVersion()).body(Result.success(result));
-    }
-
-    /** 查询批次当前补选导师名单以及名额摘要。 */
-    @GetMapping("/{batchId}/supplement-teachers")
-    public ResponseEntity<Result<List<SupplementTeacherVO>>> supplementTeachers(
-        @PathVariable("batchId") @Positive Long batchId, @AuthenticationPrincipal AccountPrincipal actor) {
-        List<SupplementTeacherVO> rows = service.listSupplementTeachers(actor, batchId);
-        SelectionBatchDetailVO batch = service.getBatch(actor, batchId);
-        return ResponseEntity.ok().eTag("batch-" + batch.getBatch().getRowVersion()).body(Result.success(rows));
-    }
-
-    /** 完整替换补选导师名单；已提交申请保留原导师处理权。 */
-    @PutMapping("/{batchId}/supplement-teachers")
-    public ResponseEntity<Result<List<SupplementTeacherVO>>> setSupplementTeachers(
-        @PathVariable("batchId") @Positive Long batchId, @Valid @RequestBody SetSupplementTeachersRequest request,
-        @RequestHeader(value = "If-Match", required = false) String ifMatch,
-        @RequestHeader("Idempotency-Key") String idempotencyKey,
-        @AuthenticationPrincipal AccountPrincipal actor) {
-        List<SupplementTeacherVO> rows = service.setSupplementTeachers(actor, batchId, request,
-            parseVersion(ifMatch, "batch"), idempotencyKey);
-        SelectionBatchDetailVO batch = service.getBatch(actor, batchId);
-        return ResponseEntity.ok().eTag("batch-" + batch.getBatch().getRowVersion()).body(Result.success(rows));
     }
 
     @GetMapping("/{batchId}/majors")

@@ -5,7 +5,6 @@ import cn.hnust.selection.request.CreateSelectionBatchRequest;
 import cn.hnust.selection.request.ExtendRoundRequest;
 import cn.hnust.selection.request.ReopenRoundRequest;
 import cn.hnust.selection.request.SetTeacherApplicationScopeRequest;
-import cn.hnust.selection.request.SetSupplementTeachersRequest;
 import cn.hnust.selection.request.SetTeacherQuotaRequest;
 import cn.hnust.selection.request.UpdateSelectionBatchRequest;
 import cn.hnust.selection.security.AccountPrincipal;
@@ -19,7 +18,6 @@ import cn.hnust.selection.vo.SelectionBatchDetailVO;
 import cn.hnust.selection.vo.SelectionBatchSummaryVO;
 import cn.hnust.selection.vo.TeacherApplicationScopeVO;
 import cn.hnust.selection.vo.TeacherScopeBatchOptionVO;
-import cn.hnust.selection.vo.SupplementTeacherVO;
 import java.util.List;
 
 /**
@@ -81,13 +79,6 @@ public interface SelectionBatchManagementService {
     /** 重开已按截止时间结案的轮次，恢复可恢复申请并按新截止时间重排后续阶段。 */
     SelectionBatchDetailVO reopenRound(AccountPrincipal actor, Long batchId, int roundNo,
         ReopenRoundRequest request, long expectedVersion, String idempotencyKey);
-
-    /** 读取补选导师许可及名额摘要。 */
-    List<SupplementTeacherVO> listSupplementTeachers(AccountPrincipal actor, Long batchId);
-
-    /** 完整替换补选导师许可名单；已提交申请不受撤销新许可影响。 */
-    List<SupplementTeacherVO> setSupplementTeachers(AccountPrincipal actor, Long batchId,
-        SetSupplementTeachersRequest request, long expectedVersion, String idempotencyKey);
 
     /** 返回本批次所在学院当前启用的专业目录，供批次配置页面展示。 */
     List<MajorVO> listBatchMajors(AccountPrincipal actor, Long batchId);

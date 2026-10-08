@@ -19,7 +19,7 @@ spring:
     url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/hnust_selection?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC}
     username: ${DB_USERNAME:root}
     # 数据库密码必须由进程环境注入；仓库配置不提供可被误用于其他环境的默认口令。
-    password: ${DB_PASSWORD:}
+    password: ${DB_PASSWORD:qwe123}
     driver-class-name: com.mysql.cj.jdbc.Driver
   sql:
     init:

@@ -304,8 +304,8 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         Long teacherId = requireTeacher(actor);
         validatePage(pageNo, pageSize);
         if (!repository.ownsBatch(teacherId, batchId)) throw notFound("未找到本人在该批次的业务范围");
-        if (!repository.hasOpenSupplementPermission(teacherId, batchId)) {
-            throw new ApiException("SUPPLEMENT_TEACHER_NOT_ALLOWED", "当前没有开放且授权给本人的补选窗口", HttpStatus.CONFLICT);
+        if (!repository.hasSupplementWorkAccess(teacherId, batchId)) {
+            throw new ApiException("SUPPLEMENT_WORK_NOT_AVAILABLE", "当前没有开放的补选窗口或可处理的本人补选申请", HttpStatus.CONFLICT);
         }
         return new PageResult<TeacherSupplementApplicationVO>(repository.listSupplementApplications(teacherId, batchId, pageNo, pageSize),
             repository.countSupplementApplications(teacherId, batchId), pageNo, pageSize);
@@ -342,8 +342,8 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
             repository.hasYearMatch(app.studentId, app.academicYearId)) {
             throw new ApiException("STUDENT_ALREADY_MATCHED", "该学生已不符合补选录取条件", HttpStatus.CONFLICT);
         }
-        if (!repository.hasSupplementPermissionAtSubmission(app.windowId, app.quotaId, app.submittedAt)) {
-            throw new ApiException("SUPPLEMENT_TEACHER_NOT_ALLOWED", "该申请提交时未获准参加补选", HttpStatus.CONFLICT);
+        if (!repository.hadSupplementEligibilityAtSubmission(app.windowId, app.quotaId, app.submittedAt)) {
+            throw new ApiException("SUPPLEMENT_WORK_NOT_AVAILABLE", "该申请提交时导师不具备当年年度资格", HttpStatus.CONFLICT);
         }
         Long scopeVersion = repository.frozenScopeVersion(batchId, teacherId);
         if (scopeVersion == null || !repository.scopeAllows(batchId, teacherId, scopeVersion, app.majorId, app.degreeType)) {
@@ -462,7 +462,7 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         if ("STUDENT_ALREADY_MATCHED".equals(code)) return "该学生已建立其他有效关系。";
         if ("STATE_CONFLICT".equals(code) || "APPLICATION_NOT_PENDING".equals(code)) return "申请状态或轮次已变化。";
         if ("TEACHER_SCOPE_MISMATCH".equals(code)) return "学生身份不符合本批次冻结范围。";
-        if ("SUPPLEMENT_TEACHER_NOT_ALLOWED".equals(code)) return "补选许可或窗口已关闭。";
+        if ("SUPPLEMENT_WORK_NOT_AVAILABLE".equals(code)) return "补选资格或窗口状态已变化，请刷新后重试。";
         return code;
     }
     private static String normalizeKey(String key) {

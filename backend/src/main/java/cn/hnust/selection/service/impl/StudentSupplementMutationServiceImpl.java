@@ -5,7 +5,7 @@ import cn.hnust.selection.exception.ApiException;
 import cn.hnust.selection.repository.StudentSupplementMutationRepository;
 import cn.hnust.selection.repository.StudentSupplementMutationRepository.Operation;
 import cn.hnust.selection.repository.StudentSupplementMutationRepository.Participant;
-import cn.hnust.selection.repository.StudentSupplementMutationRepository.PermittedTeacher;
+import cn.hnust.selection.repository.StudentSupplementMutationRepository.EligibleTeacher;
 import cn.hnust.selection.repository.StudentSupplementMutationRepository.SupplementWindow;
 import cn.hnust.selection.request.SubmitSupplementApplicationRequest;
 import cn.hnust.selection.security.AccountPrincipal;
@@ -75,14 +75,11 @@ public class StudentSupplementMutationServiceImpl implements StudentSupplementMu
             throw new ApiException("SUPPLEMENT_PENDING_EXISTS", "已有待处理补选申请", HttpStatus.CONFLICT);
         }
 
-        PermittedTeacher teacher = repository.findPermittedTeacher(batchId, window.getId(), teacherId,
+        EligibleTeacher teacher = repository.findEligibleTeacher(batchId, window.getId(), teacherId,
                 participant.getMajorId(), now)
-            .orElseThrow(() -> new ApiException("SUPPLEMENT_TEACHER_NOT_ALLOWED", "该导师未获准参与本批次补选",
+            .orElseThrow(() -> new ApiException("SUPPLEMENT_CANDIDATE_NOT_AVAILABLE",
+                "该导师当前不满足补选候选的年度资格、账号、资料或名额条件",
                 HttpStatus.CONFLICT));
-        if (!teacher.isPermissionActive()) {
-            throw new ApiException("SUPPLEMENT_TEACHER_NOT_ALLOWED", "该导师未获准参与本批次补选",
-                HttpStatus.CONFLICT);
-        }
         int requiredDegreeBit = degreeBit(participant.getDegreeType());
         if ((teacher.getDegreeMask() & requiredDegreeBit) == 0 || !teacher.isMajorAllowed()) {
             throw new ApiException("TEACHER_SCOPE_MISMATCH", "学生专业或学位类型不在导师冻结招生范围内",

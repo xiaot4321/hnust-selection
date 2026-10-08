@@ -121,18 +121,23 @@ public class PersonnelManagementRepository {
                 "s.enrollment_year_code, s.classification_version, CAST(NULL AS CHAR) AS review_status " +
                 "FROM student s JOIN account a ON a.id = s.account_id JOIN college c ON c.id = s.college_id " +
                 "JOIN major m ON m.id = s.major_id WHERE s.college_id = ?" +
-                (identifier == null || identifier.trim().isEmpty() ? "" : " AND s.student_no = ?") +
+                (identifier == null || identifier.trim().isEmpty() ? "" :
+                    " AND (s.student_no LIKE CONCAT('%', ?, '%') OR s.full_name LIKE CONCAT('%', ?, '%') " +
+                        "OR m.name LIKE CONCAT('%', ?, '%'))") +
                 " ORDER BY s.student_no, s.id LIMIT ? OFFSET ?";
         return identifier == null || identifier.trim().isEmpty()
             ? jdbc.query(sql, (rs, row) -> person(rs), collegeId, limit, offset)
-            : jdbc.query(sql, (rs, row) -> person(rs), collegeId, identifier.trim(), limit, offset);
+            : jdbc.query(sql, (rs, row) -> person(rs), collegeId, identifier.trim(), identifier.trim(),
+                identifier.trim(), limit, offset);
     }
 
     public long countStudents(Long collegeId, String identifier) {
         Long count = identifier == null || identifier.trim().isEmpty()
             ? jdbc.queryForObject("SELECT COUNT(*) FROM student WHERE college_id = ?", Long.class, collegeId)
-            : jdbc.queryForObject("SELECT COUNT(*) FROM student WHERE college_id = ? AND student_no = ?",
-                Long.class, collegeId, identifier.trim());
+            : jdbc.queryForObject("SELECT COUNT(*) FROM student s JOIN major m ON m.id = s.major_id " +
+                "WHERE s.college_id = ? AND (s.student_no LIKE CONCAT('%', ?, '%') " +
+                "OR s.full_name LIKE CONCAT('%', ?, '%') OR m.name LIKE CONCAT('%', ?, '%'))",
+                Long.class, collegeId, identifier.trim(), identifier.trim(), identifier.trim());
         return count == null ? 0 : count.longValue();
     }
 
@@ -144,18 +149,20 @@ public class PersonnelManagementRepository {
                 "p.review_status FROM teacher t JOIN account a ON a.id = t.account_id " +
                 "JOIN college c ON c.id = t.college_id " +
                 "LEFT JOIN teacher_public_profile_version p ON p.id = t.current_public_profile_version_id " +
-                "WHERE t.college_id = ?" + (identifier == null || identifier.trim().isEmpty() ? "" : " AND t.employee_no = ?") +
+                "WHERE t.college_id = ?" + (identifier == null || identifier.trim().isEmpty() ? "" :
+                    " AND (t.employee_no LIKE CONCAT('%', ?, '%') OR t.full_name LIKE CONCAT('%', ?, '%'))") +
                 " ORDER BY t.employee_no, t.id LIMIT ? OFFSET ?";
         return identifier == null || identifier.trim().isEmpty()
             ? jdbc.query(sql, (rs, row) -> person(rs), collegeId, limit, offset)
-            : jdbc.query(sql, (rs, row) -> person(rs), collegeId, identifier.trim(), limit, offset);
+            : jdbc.query(sql, (rs, row) -> person(rs), collegeId, identifier.trim(), identifier.trim(), limit, offset);
     }
 
     public long countTeachers(Long collegeId, String identifier) {
         Long count = identifier == null || identifier.trim().isEmpty()
             ? jdbc.queryForObject("SELECT COUNT(*) FROM teacher WHERE college_id = ?", Long.class, collegeId)
-            : jdbc.queryForObject("SELECT COUNT(*) FROM teacher WHERE college_id = ? AND employee_no = ?",
-                Long.class, collegeId, identifier.trim());
+            : jdbc.queryForObject("SELECT COUNT(*) FROM teacher WHERE college_id = ? " +
+                "AND (employee_no LIKE CONCAT('%', ?, '%') OR full_name LIKE CONCAT('%', ?, '%'))",
+                Long.class, collegeId, identifier.trim(), identifier.trim());
         return count == null ? 0 : count.longValue();
     }
 
@@ -267,7 +274,8 @@ public class PersonnelManagementRepository {
             "e.evidence_reference, e.source_name, DATE_FORMAT(e.valid_from, '%Y-%m-%dT%H:%i:%s.%fZ') AS valid_from, " +
             "DATE_FORMAT(e.valid_to, '%Y-%m-%dT%H:%i:%s.%fZ') AS valid_to, e.changed_by " +
             "FROM annual_eligibility e JOIN academic_year y ON y.id = e.academic_year_id " +
-            "LEFT JOIN student s ON s.id = e.student_id LEFT JOIN teacher t ON t.id = e.teacher_id " +
+            "LEFT JOIN student s ON s.id = e.student_id LEFT JOIN major m ON m.id = s.major_id " +
+            "LEFT JOIN teacher t ON t.id = e.teacher_id " +
             "WHERE e.college_id = ?");
         List<Object> args = new ArrayList<Object>();
         args.add(collegeId);
@@ -280,7 +288,11 @@ public class PersonnelManagementRepository {
             args.add(personType);
         }
         if (identifier != null && !identifier.trim().isEmpty()) {
-            sql.append(" AND COALESCE(s.student_no, t.employee_no) = ?");
+            sql.append(" AND (COALESCE(s.student_no, t.employee_no) LIKE CONCAT('%', ?, '%') " +
+                "OR COALESCE(s.full_name, t.full_name) LIKE CONCAT('%', ?, '%') " +
+                "OR m.name LIKE CONCAT('%', ?, '%'))");
+            args.add(identifier.trim());
+            args.add(identifier.trim());
             args.add(identifier.trim());
         }
         if (!history) {
