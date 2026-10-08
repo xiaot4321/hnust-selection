@@ -29,9 +29,9 @@ public class SmtpEmailDelivery implements EmailDelivery {
         sender.getJavaMailProperties().setProperty("mail.smtp.auth", "true");
         sender.getJavaMailProperties().setProperty("mail.smtp.ssl.enable", "true");
         sender.getJavaMailProperties().setProperty("mail.smtp.ssl.checkserveridentity", "true");
-        sender.getJavaMailProperties().setProperty("mail.smtp.connectiontimeout", "5000");
-        sender.getJavaMailProperties().setProperty("mail.smtp.timeout", "5000");
-        sender.getJavaMailProperties().setProperty("mail.smtp.writetimeout", "5000");
+        sender.getJavaMailProperties().setProperty("mail.smtp.connectiontimeout", "30000");
+        sender.getJavaMailProperties().setProperty("mail.smtp.timeout", "30000");
+        sender.getJavaMailProperties().setProperty("mail.smtp.writetimeout", "30000");
     }
 
     @Override public boolean isConfigured() {

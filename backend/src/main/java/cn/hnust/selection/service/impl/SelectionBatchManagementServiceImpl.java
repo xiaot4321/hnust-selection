@@ -266,6 +266,11 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
         Map<String, BatchStageVO> oldByCode = new LinkedHashMap<String, BatchStageVO>();
         for (BatchStageVO stage : oldStages) oldByCode.put(stage.getStageCode(), stage);
         Timestamp now = repository.utcNow();
+        if ("DRAFT".equals(batch.getStatus())) {
+            for (SchedulePoint point : schedule.values()) {
+                if (point.start.isBefore(now.toInstant())) throw invalidArgument("阶段开始时间不能早于当前时间");
+            }
+        }
         if (!"DRAFT".equals(batch.getStatus())) validateScheduleChanges(oldStages, schedule, now);
         String before = scheduleSnapshot(oldStages);
         int revisionNo = (int) repository.nextScheduleRevision(batchId);
@@ -315,6 +320,12 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
         if (!"DRAFT".equals(batch.getStatus())) throw stateConflict("只有草稿批次可以发布");
         List<BatchStageVO> stages = repository.listStages(batchId);
         validateStoredSchedule(batch, stages);
+        Instant publishNow = repository.utcNow().toInstant();
+        for (BatchStageVO stage : stages) {
+            if (stage.getPlannedStartAt() != null && stage.getPlannedStartAt().isBefore(publishNow)) {
+                throw invalidArgument("阶段开始时间已早于当前时间，请调整排期后再发布");
+            }
+        }
         int quotas = repository.countConfiguredQuotas(batchId);
         if (quotas == 0 || repository.countEligibleConfiguredQuotas(batchId) == 0) {
             throw new ApiException("BATCH_CONFIGURATION_INCOMPLETE", "请为至少一位当前符合资格的导师设置名额", HttpStatus.CONFLICT);
