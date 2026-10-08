@@ -27,8 +27,13 @@ public class TeacherWorkspaceRepository {
     public Optional<TeacherProfileVO> findProfile(Long teacherId) {
         String sql = "SELECT teacher.id, teacher.employee_no, teacher.full_name, " +
             "published.research_directions AS published_directions, published.biography AS published_biography, " +
+            "published.education_experience AS published_education_experience, published.work_experience AS published_work_experience, " +
+            "published.courses AS published_courses, published.research_and_achievements AS published_research_and_achievements, " +
             "latest.review_status, latest.review_comment, latest.research_directions AS submitted_directions, " +
-            "latest.biography AS submitted_biography, COALESCE(latest.version_no, 0) AS version_no, " +
+            "latest.biography AS submitted_biography, latest.education_experience AS submitted_education_experience, " +
+            "latest.work_experience AS submitted_work_experience, latest.courses AS submitted_courses, " +
+            "latest.research_and_achievements AS submitted_research_and_achievements, " +
+            "COALESCE(latest.version_no, 0) AS version_no, " +
             "COALESCE(latest.row_version, 0) AS profile_row_version " +
             "FROM teacher LEFT JOIN teacher_public_profile_version published " +
             "ON published.id = teacher.current_public_profile_version_id AND published.published_at IS NOT NULL " +
@@ -41,9 +46,17 @@ public class TeacherWorkspaceRepository {
             value.setFullName(rs.getString("full_name"));
             value.setPublishedResearchDirections(rs.getString("published_directions"));
             value.setPublishedBiography(rs.getString("published_biography"));
+            value.setPublishedEducationExperience(rs.getString("published_education_experience"));
+            value.setPublishedWorkExperience(rs.getString("published_work_experience"));
+            value.setPublishedCourses(rs.getString("published_courses"));
+            value.setPublishedResearchAndAchievements(rs.getString("published_research_and_achievements"));
             value.setReviewStatus(rs.getString("review_status")); value.setReviewComment(rs.getString("review_comment"));
             value.setSubmittedResearchDirections(rs.getString("submitted_directions"));
             value.setSubmittedBiography(rs.getString("submitted_biography")); value.setVersionNo(rs.getInt("version_no"));
+            value.setSubmittedEducationExperience(rs.getString("submitted_education_experience"));
+            value.setSubmittedWorkExperience(rs.getString("submitted_work_experience"));
+            value.setSubmittedCourses(rs.getString("submitted_courses"));
+            value.setSubmittedResearchAndAchievements(rs.getString("submitted_research_and_achievements"));
             value.setEtag(profileEtag(value.getTeacherId(), value.getVersionNo(), rs.getLong("profile_row_version"))); return value;
         }, teacherId);
         return rows.isEmpty() ? Optional.<TeacherProfileVO>empty() : Optional.of(rows.get(0));
@@ -55,17 +68,21 @@ public class TeacherWorkspaceRepository {
         return !rows.isEmpty();
     }
 
-    public void updateDraftProfile(Long teacherId, int versionNo, String directions, String biography) {
+    public void updateDraftProfile(Long teacherId, int versionNo, String directions, String biography,
+        String educationExperience, String workExperience, String courses, String researchAndAchievements) {
         jdbc.update("UPDATE teacher_public_profile_version SET research_directions = ?, biography = ?, " +
+            "education_experience = ?, work_experience = ?, courses = ?, research_and_achievements = ?, " +
             "review_status = 'PENDING_REVIEW', submitted_at = UTC_TIMESTAMP(3), review_comment = NULL, " +
             "row_version = row_version + 1 WHERE teacher_id = ? AND version_no = ? AND review_status = 'DRAFT'",
-            directions, biography, teacherId, versionNo);
+            directions, biography, educationExperience, workExperience, courses, researchAndAchievements, teacherId, versionNo);
     }
 
-    public void insertProfileSubmission(Long teacherId, int versionNo, String directions, String biography, Long accountId) {
+    public void insertProfileSubmission(Long teacherId, int versionNo, String directions, String biography,
+        String educationExperience, String workExperience, String courses, String researchAndAchievements) {
         jdbc.update("INSERT INTO teacher_public_profile_version (teacher_id, version_no, research_directions, biography, " +
-            "review_status, submitted_at) VALUES (?, ?, ?, ?, 'PENDING_REVIEW', UTC_TIMESTAMP(3))",
-            teacherId, versionNo, directions, biography);
+            "education_experience, work_experience, courses, research_and_achievements, review_status, submitted_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', UTC_TIMESTAMP(3))",
+            teacherId, versionNo, directions, biography, educationExperience, workExperience, courses, researchAndAchievements);
     }
 
     public List<TeacherApplicationVO> listRoundApplications(Long teacherId, Long batchId, int roundNo, int pageNo, int pageSize) {

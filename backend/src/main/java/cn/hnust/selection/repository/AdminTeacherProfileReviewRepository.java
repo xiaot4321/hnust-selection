@@ -107,8 +107,12 @@ public class AdminTeacherProfileReviewRepository {
     private String viewSql() {
         return "SELECT profile.id AS version_id, profile.teacher_id, teacher.employee_no, teacher.full_name, teacher.college_id, " +
             "college.name AS college_name, profile.version_no, profile.review_status, profile.research_directions, profile.biography, " +
+            "profile.education_experience, profile.work_experience, profile.courses, profile.research_and_achievements, " +
             "DATE_FORMAT(profile.submitted_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS submitted_at, published.version_no AS published_version_no, " +
-            "published.research_directions AS published_directions, published.biography AS published_biography, profile.row_version " +
+            "published.research_directions AS published_directions, published.biography AS published_biography, " +
+            "published.education_experience AS published_education_experience, published.work_experience AS published_work_experience, " +
+            "published.courses AS published_courses, published.research_and_achievements AS published_research_and_achievements, " +
+            "profile.row_version " +
             "FROM teacher_public_profile_version profile JOIN teacher teacher ON teacher.id = profile.teacher_id " +
             "JOIN college college ON college.id = teacher.college_id LEFT JOIN teacher_public_profile_version published " +
             "ON published.id = teacher.current_public_profile_version_id AND published.published_at IS NOT NULL";
@@ -121,11 +125,19 @@ public class AdminTeacherProfileReviewRepository {
         value.setCollegeId(rs.getLong("college_id")); value.setCollegeName(rs.getString("college_name"));
         value.setVersionNo(rs.getInt("version_no")); value.setReviewStatus(rs.getString("review_status"));
         value.setResearchDirections(rs.getString("research_directions")); value.setBiography(rs.getString("biography"));
+        value.setEducationExperience(rs.getString("education_experience"));
+        value.setWorkExperience(rs.getString("work_experience"));
+        value.setCourses(rs.getString("courses"));
+        value.setResearchAndAchievements(rs.getString("research_and_achievements"));
         value.setSubmittedAt(rs.getString("submitted_at"));
         int publishedVersion = rs.getInt("published_version_no");
         value.setCurrentPublishedVersionNo(rs.wasNull() ? null : Integer.valueOf(publishedVersion));
         value.setCurrentPublishedResearchDirections(rs.getString("published_directions"));
         value.setCurrentPublishedBiography(rs.getString("published_biography"));
+        value.setCurrentPublishedEducationExperience(rs.getString("published_education_experience"));
+        value.setCurrentPublishedWorkExperience(rs.getString("published_work_experience"));
+        value.setCurrentPublishedCourses(rs.getString("published_courses"));
+        value.setCurrentPublishedResearchAndAchievements(rs.getString("published_research_and_achievements"));
         long rowVersion = rs.getLong("row_version"); value.setRowVersion(Long.valueOf(rowVersion));
         value.setEtag(etag(value.getVersionId(), rowVersion));
         return value;

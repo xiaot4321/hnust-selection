@@ -12,10 +12,18 @@ public class AdminTeacherProfileVersionVO {
     private String reviewStatus;
     private String researchDirections;
     private String biography;
+    private String educationExperience;
+    private String workExperience;
+    private String courses;
+    private String researchAndAchievements;
     private String submittedAt;
     private Integer currentPublishedVersionNo;
     private String currentPublishedResearchDirections;
     private String currentPublishedBiography;
+    private String currentPublishedEducationExperience;
+    private String currentPublishedWorkExperience;
+    private String currentPublishedCourses;
+    private String currentPublishedResearchAndAchievements;
     private Long rowVersion;
     private String etag;
 
@@ -39,6 +47,14 @@ public class AdminTeacherProfileVersionVO {
     public void setResearchDirections(String value) { researchDirections = value; }
     public String getBiography() { return biography; }
     public void setBiography(String value) { biography = value; }
+    public String getEducationExperience() { return educationExperience; }
+    public void setEducationExperience(String value) { educationExperience = value; }
+    public String getWorkExperience() { return workExperience; }
+    public void setWorkExperience(String value) { workExperience = value; }
+    public String getCourses() { return courses; }
+    public void setCourses(String value) { courses = value; }
+    public String getResearchAndAchievements() { return researchAndAchievements; }
+    public void setResearchAndAchievements(String value) { researchAndAchievements = value; }
     public String getSubmittedAt() { return submittedAt; }
     public void setSubmittedAt(String value) { submittedAt = value; }
     public Integer getCurrentPublishedVersionNo() { return currentPublishedVersionNo; }
@@ -47,6 +63,14 @@ public class AdminTeacherProfileVersionVO {
     public void setCurrentPublishedResearchDirections(String value) { currentPublishedResearchDirections = value; }
     public String getCurrentPublishedBiography() { return currentPublishedBiography; }
     public void setCurrentPublishedBiography(String value) { currentPublishedBiography = value; }
+    public String getCurrentPublishedEducationExperience() { return currentPublishedEducationExperience; }
+    public void setCurrentPublishedEducationExperience(String value) { currentPublishedEducationExperience = value; }
+    public String getCurrentPublishedWorkExperience() { return currentPublishedWorkExperience; }
+    public void setCurrentPublishedWorkExperience(String value) { currentPublishedWorkExperience = value; }
+    public String getCurrentPublishedCourses() { return currentPublishedCourses; }
+    public void setCurrentPublishedCourses(String value) { currentPublishedCourses = value; }
+    public String getCurrentPublishedResearchAndAchievements() { return currentPublishedResearchAndAchievements; }
+    public void setCurrentPublishedResearchAndAchievements(String value) { currentPublishedResearchAndAchievements = value; }
     public Long getRowVersion() { return rowVersion; }
     public void setRowVersion(Long value) { rowVersion = value; }
     public String getEtag() { return etag; }

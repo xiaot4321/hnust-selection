@@ -81,6 +81,10 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         TeacherDirectoryDetailVO result = new TeacherDirectoryDetailVO();
         copy(toItem(row, repository.findAllowedMajors(row.getScopeVersionId()), official), result);
         result.setBiography(firstNonBlank(row.getBiography(), official == null ? null : official.getBiography()));
+        result.setEducationExperience(row.getEducationExperience());
+        result.setWorkExperience(row.getWorkExperience());
+        result.setCourses(row.getCourses());
+        result.setResearchAndAchievements(row.getResearchAndAchievements());
         return result;
     }
 

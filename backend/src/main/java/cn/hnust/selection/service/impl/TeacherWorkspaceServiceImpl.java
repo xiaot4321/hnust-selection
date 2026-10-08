@@ -69,7 +69,7 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
     @Transactional
     public TeacherProfileVO updateProfile(AccountPrincipal actor, String ifMatch, UpdateTeacherProfileRequest request) {
         Long teacherId = requireTeacher(actor);
-        if (request == null) throw invalid("请填写个人简介或研究方向");
+        if (request == null) throw invalid("请填写导师公开资料");
         if (ifMatch == null || ifMatch.trim().isEmpty()) {
             throw new ApiException("PRECONDITION_REQUIRED", "更新资料必须提供 If-Match", HttpStatus.PRECONDITION_REQUIRED);
         }
@@ -83,15 +83,25 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         }
         String directions = clean(request.getResearchDirections());
         String biography = clean(request.getBiography());
-        if (directions.length() > 2000 || biography.length() > 10000) throw invalid("研究方向或个人简介超出长度限制");
+        String educationExperience = clean(request.getEducationExperience());
+        String workExperience = clean(request.getWorkExperience());
+        String courses = clean(request.getCourses());
+        String researchAndAchievements = clean(request.getResearchAndAchievements());
+        if (directions.length() > 2000 || biography.length() > 10000 || educationExperience.length() > 10000 ||
+            workExperience.length() > 10000 || courses.length() > 10000 || researchAndAchievements.length() > 10000) {
+            throw invalid("导师公开资料超出长度限制");
+        }
         int nextVersion = current.getVersionNo().intValue() + 1;
         if ("DRAFT".equals(current.getReviewStatus())) {
-            repository.updateDraftProfile(teacherId, current.getVersionNo().intValue(), directions, biography);
+            repository.updateDraftProfile(teacherId, current.getVersionNo().intValue(), directions, biography,
+                educationExperience, workExperience, courses, researchAndAchievements);
         } else {
-            repository.insertProfileSubmission(teacherId, nextVersion, directions, biography, actor.getAccountId());
+            repository.insertProfileSubmission(teacherId, nextVersion, directions, biography, educationExperience,
+                workExperience, courses, researchAndAchievements);
         }
         long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_SUBMIT",
-            UUID.randomUUID().toString(), hash("PROFILE|" + teacherId + "|" + nextVersion + "|" + directions + "|" + biography));
+            UUID.randomUUID().toString(), hash("PROFILE|" + teacherId + "|" + nextVersion + "|" + directions + "|" +
+                biography + "|" + educationExperience + "|" + workExperience + "|" + courses + "|" + researchAndAchievements));
         repository.insertAudit(actor.getAccountId(), null, "TEACHER_PUBLIC_PROFILE_VERSION", Long.valueOf(nextVersion),
             "TEACHER_PROFILE_SUBMIT", null, "{\"versionNo\":" + nextVersion + ",\"reviewStatus\":\"PENDING_REVIEW\"}", operationId);
         repository.completeOperation(operationId);

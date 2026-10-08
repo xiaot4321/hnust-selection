@@ -108,13 +108,15 @@ public class TeacherDirectoryRepository {
 
     public Optional<TeacherRow> findTeacher(Long batchId, Long studentId, Long teacherId) {
         StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
-            "profile.research_directions, profile.biography, scope.allowed_degree_mask, slot.scope_version_id, ");
+            "profile.research_directions, profile.biography, profile.education_experience, profile.work_experience, " +
+            "profile.courses, profile.research_and_achievements, scope.allowed_degree_mask, slot.scope_version_id, ");
         sql.append("CASE WHEN ").append(CAN_APPLY).append(" THEN 1 ELSE 0 END AS can_apply");
         sql.append(FROM_AND_WHERE).append(" AND teacher.id = ?");
         List<TeacherRow> rows = jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
             rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
             rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
-            rs.getLong("scope_version_id"), rs.getBoolean("can_apply")), studentId, batchId, teacherId);
+            rs.getLong("scope_version_id"), rs.getBoolean("can_apply"), rs.getString("education_experience"),
+            rs.getString("work_experience"), rs.getString("courses"), rs.getString("research_and_achievements")), studentId, batchId, teacherId);
         return rows.isEmpty() ? Optional.<TeacherRow>empty() : Optional.of(rows.get(0));
     }
 
@@ -212,12 +214,26 @@ public class TeacherDirectoryRepository {
         private final Integer degreeMask;
         private final Long scopeVersionId;
         private final boolean canApply;
+        private final String educationExperience;
+        private final String workExperience;
+        private final String courses;
+        private final String researchAndAchievements;
         public TeacherRow(Long teacherId, String employeeNo, String fullName, String collegeName, String researchDirections,
             String biography, Integer degreeMask, Long scopeVersionId, boolean canApply) {
             this.teacherId = teacherId; this.employeeNo = employeeNo; this.fullName = fullName;
             this.collegeName = collegeName;
             this.researchDirections = researchDirections; this.biography = biography; this.degreeMask = degreeMask;
             this.scopeVersionId = scopeVersionId; this.canApply = canApply;
+            this.educationExperience = null; this.workExperience = null; this.courses = null; this.researchAndAchievements = null;
+        }
+        public TeacherRow(Long teacherId, String employeeNo, String fullName, String collegeName, String researchDirections,
+            String biography, Integer degreeMask, Long scopeVersionId, boolean canApply, String educationExperience,
+            String workExperience, String courses, String researchAndAchievements) {
+            this.teacherId = teacherId; this.employeeNo = employeeNo; this.fullName = fullName;
+            this.collegeName = collegeName; this.researchDirections = researchDirections; this.biography = biography;
+            this.degreeMask = degreeMask; this.scopeVersionId = scopeVersionId; this.canApply = canApply;
+            this.educationExperience = educationExperience; this.workExperience = workExperience;
+            this.courses = courses; this.researchAndAchievements = researchAndAchievements;
         }
         public Long getTeacherId() { return teacherId; }
         public String getEmployeeNo() { return employeeNo; }
@@ -228,6 +244,10 @@ public class TeacherDirectoryRepository {
         public Integer getDegreeMask() { return degreeMask; }
         public Long getScopeVersionId() { return scopeVersionId; }
         public boolean isCanApply() { return canApply; }
+        public String getEducationExperience() { return educationExperience; }
+        public String getWorkExperience() { return workExperience; }
+        public String getCourses() { return courses; }
+        public String getResearchAndAchievements() { return researchAndAchievements; }
     }
 
     private static class ScopeMajorRow {
