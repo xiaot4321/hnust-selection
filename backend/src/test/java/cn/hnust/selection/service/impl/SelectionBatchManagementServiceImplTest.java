@@ -16,8 +16,10 @@ import cn.hnust.selection.security.AccountAuthorization;
 import cn.hnust.selection.security.AccountIdentity;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AccountAuthorizationService;
+import cn.hnust.selection.service.AdminRelationAdjustmentService;
 import cn.hnust.selection.vo.MajorVO;
 import cn.hnust.selection.vo.BatchStageVO;
+import cn.hnust.selection.vo.SelectionBatchSummaryVO;
 import cn.hnust.selection.vo.TeacherApplicationScopeVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +68,7 @@ class SelectionBatchManagementServiceImplTest {
     private SelectionBatchRepository repository;
     private AccountRepository accountRepository;
     private AccountAuthorizationService authorizationService;
+    private AdminRelationAdjustmentService relationAdjustmentService;
     private SelectionBatchManagementServiceImpl service;
     private AccountPrincipal teacher;
     private AccountPrincipal admin;
@@ -77,9 +80,10 @@ class SelectionBatchManagementServiceImplTest {
         repository = mock(SelectionBatchRepository.class);
         accountRepository = mock(AccountRepository.class);
         authorizationService = mock(AccountAuthorizationService.class);
+        relationAdjustmentService = mock(AdminRelationAdjustmentService.class);
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         service = new SelectionBatchManagementServiceImpl(repository, accountRepository, authorizationService,
-            new ObjectMapper(), transactionManager);
+            relationAdjustmentService, new ObjectMapper(), transactionManager);
 
         teacherRecord = account(TEACHER_ACCOUNT_ID, "TEACHER");
         teacher = principal(TEACHER_ACCOUNT_ID, AccountRole.TEACHER,
@@ -282,6 +286,98 @@ class SelectionBatchManagementServiceImplTest {
         when(repository.listStages(BATCH_ID)).thenReturn(storedStages(2000L, 2000L));
         assertThrows(ApiException.class, () -> service.publish(admin, BATCH_ID, QUOTA_KEY));
         verify(repository, never()).publishStages(BATCH_ID);
+    }
+
+    @Test
+    void pausingAnActiveBatchPreservesLockedRelationsApplicationsAndRunningSlot() {
+        String key = "00000000-0000-4000-8000-000000000041";
+        prepareLifecycleContext("ACTIVE", "PAUSED", "PAUSE", "BATCH_PAUSE", key);
+        when(repository.currentStageId(BATCH_ID)).thenReturn(601L);
+
+        service.pause(admin, BATCH_ID, key);
+
+        verify(repository).updateBatchState(BATCH_ID, "ACTIVE", "PAUSED", "PAUSE");
+        verify(repository).insertPauseLifecycleEvent(BATCH_ID, 601L, null, ADMIN_ACCOUNT_ID, "管理员暂停批次", 900L);
+        verify(relationAdjustmentService, never()).revokeLockedForBatchCancellation(admin, BATCH_ID, "管理员取消批次");
+        verify(repository, never()).cancelPendingApplications(BATCH_ID, ADMIN_ACCOUNT_ID, 900L);
+        verify(repository, never()).markUnmatchedByBatchCancellation(BATCH_ID, 900L);
+        verify(repository, never()).closeRemainingBatchStages(BATCH_ID);
+        verify(repository, never()).releaseRunningSlot(BATCH_ID);
+    }
+
+    @Test
+    void resumingRequiresAnOpenPauseEventAndShiftsTheSavedSchedule() {
+        String key = "00000000-0000-4000-8000-000000000042";
+        prepareLifecycleContext("PAUSED", "ACTIVE", "RESUME", "BATCH_RESUME", key);
+        when(repository.lockOpenPauseEvent(BATCH_ID)).thenReturn(Optional.of(
+            new SelectionBatchRepository.PauseEvent(701L, new Timestamp(1_000L))));
+        when(repository.finishPauseAndShiftSchedule(BATCH_ID, 701L)).thenReturn(1);
+        when(repository.utcNow()).thenReturn(new Timestamp(6_000L));
+        when(repository.currentStageId(BATCH_ID)).thenReturn(601L);
+
+        service.resume(admin, BATCH_ID, key);
+
+        verify(repository).finishPauseAndShiftSchedule(BATCH_ID, 701L);
+        verify(repository).updateBatchState(BATCH_ID, "PAUSED", "ACTIVE", "RESUME");
+        verify(repository).insertLifecycleEvent(BATCH_ID, "RESUME", "PAUSED", "ACTIVE", 601L,
+            ADMIN_ACCOUNT_ID, "ADMIN", "管理员恢复批次，未关闭阶段和补选窗口按暂停时长顺延", 900L);
+        verify(relationAdjustmentService, never()).revokeLockedForBatchCancellation(admin, BATCH_ID, "管理员取消批次");
+        verify(repository, never()).releaseRunningSlot(BATCH_ID);
+    }
+
+    @Test
+    void cancellingAnActiveBatchRevokesRelationsAndReleasesItsRunningSlot() {
+        String key = "00000000-0000-4000-8000-000000000043";
+        prepareLifecycleContext("ACTIVE", "CANCELLED", "CANCEL", "BATCH_CANCEL", key);
+        when(relationAdjustmentService.revokeLockedForBatchCancellation(admin, BATCH_ID, "管理员取消批次"))
+            .thenReturn(2);
+        when(repository.countMatchedParticipants(BATCH_ID)).thenReturn(0);
+        when(repository.releaseRunningSlot(BATCH_ID)).thenReturn(1);
+
+        service.cancel(admin, BATCH_ID, key);
+
+        verify(relationAdjustmentService).revokeLockedForBatchCancellation(admin, BATCH_ID, "管理员取消批次");
+        verify(repository).cancelPendingApplications(BATCH_ID, ADMIN_ACCOUNT_ID, 900L);
+        verify(repository).markUnmatchedByBatchCancellation(BATCH_ID, 900L);
+        verify(repository).closeRemainingBatchStages(BATCH_ID);
+        verify(repository).releaseRunningSlot(BATCH_ID);
+        verify(repository).updateBatchState(BATCH_ID, "ACTIVE", "CANCELLED", "CANCEL");
+    }
+
+    @Test
+    void cancellingRollsBackIfAnyMatchedParticipantRemains() {
+        String key = "00000000-0000-4000-8000-000000000044";
+        prepareLifecycleContext("ACTIVE", "CANCELLED", "CANCEL", "BATCH_CANCEL", key);
+        when(relationAdjustmentService.revokeLockedForBatchCancellation(admin, BATCH_ID, "管理员取消批次"))
+            .thenReturn(1);
+        when(repository.countMatchedParticipants(BATCH_ID)).thenReturn(1);
+
+        ApiException exception = assertThrows(ApiException.class, () -> service.cancel(admin, BATCH_ID, key));
+
+        assertEquals("STATE_CONFLICT", exception.getCode());
+        verify(repository, never()).cancelPendingApplications(BATCH_ID, ADMIN_ACCOUNT_ID, 900L);
+        verify(repository, never()).releaseRunningSlot(BATCH_ID);
+        verify(repository, never()).updateBatchState(BATCH_ID, "ACTIVE", "CANCELLED", "CANCEL");
+    }
+
+    private void prepareLifecycleContext(String oldStatus, String newStatus, String action,
+        String operationType, String key) {
+        prepareAdminContext();
+        when(authorizationService.hasCapability(admin, "BATCH_MANAGER", COLLEGE_ID, BATCH_ID)).thenReturn(true);
+        when(repository.lockBatch(BATCH_ID)).thenReturn(Optional.of(batch(oldStatus)));
+        when(repository.findOperation(ADMIN_ACCOUNT_ID, operationType, key)).thenReturn(Optional.<SelectionBatchRepository.OperationRecord>empty());
+        when(repository.insertOperation(eq(ADMIN_ACCOUNT_ID), eq("ADMIN"), eq(operationType), eq(COLLEGE_ID),
+            eq(BATCH_ID), eq(key), any(String.class))).thenReturn(900L);
+        when(repository.updateBatchState(BATCH_ID, oldStatus, newStatus, action)).thenReturn(1);
+        when(repository.findBatch(BATCH_ID)).thenReturn(Optional.of(batch(newStatus)));
+        when(repository.listBatches(COLLEGE_ID, Collections.singletonList(BATCH_ID)))
+            .thenReturn(Collections.singletonList(batchSummary(newStatus)));
+        when(repository.listStages(BATCH_ID)).thenReturn(Collections.<BatchStageVO>emptyList());
+    }
+
+    private static SelectionBatchSummaryVO batchSummary(String status) {
+        return new SelectionBatchSummaryVO(BATCH_ID, COLLEGE_ID, "计算机学院", YEAR_ID, "2026", "2026-01",
+            "测试批次", status, false, null, null, null, 2L);
     }
 
     private void prepareScheduleContext() {

@@ -34,21 +34,33 @@ class TeacherWorkspaceServiceImplTest {
         when(repository.findProfile(1L)).thenReturn(Optional.of(profile));
     }
     @ParameterizedTest @ValueSource(strings = {"current", "stale"})
-    void pendingReviewRejectsRepeatWithoutWriting(String etag) {
+    void pendingReviewCanBeEditedWithCurrentEtag(String etag) {
         profile.setReviewStatus("PENDING_REVIEW");
-        ApiException failure = assertThrows(ApiException.class,
-            () -> service.updateProfile(actor, etag, new UpdateTeacherProfileRequest()));
-        assertEquals("PROFILE_ALREADY_SUBMITTED", failure.getCode());
-        verify(repository, never()).updateDraftProfile(anyLong(), anyInt(), anyString(), anyString());
-        verify(repository, never()).insertProfileSubmission(anyLong(), anyInt(), anyString(), anyString(), anyLong());
-        verify(repository, never()).insertOperation(anyLong(), any(), anyString(), anyString(), anyString());
-        verify(repository, never()).insertAudit(anyLong(), any(), anyString(), anyLong(), anyString(), any(), anyString(), anyLong());
+        profile.setProfileRowVersion(Long.valueOf(5L));
+        profile.setSubmittedResearchDirections("旧研究方向");
+        UpdateTeacherProfileRequest request = new UpdateTeacherProfileRequest();
+        if ("stale".equals(etag)) {
+            ApiException failure = assertThrows(ApiException.class, () -> service.updateProfile(actor, etag, request));
+            assertEquals("PRECONDITION_FAILED", failure.getCode());
+            verify(repository, never()).updatePendingProfile(anyLong(), anyInt(), anyLong(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString());
+            verify(repository, never()).insertOperation(anyLong(), any(), anyString(), anyString(), anyString());
+        } else {
+            when(repository.updatePendingProfile(1L, 1, 5L, "", "", "", "", "", "")).thenReturn(1);
+            service.updateProfile(actor, etag, request);
+            verify(repository).updatePendingProfile(1L, 1, 5L, "", "", "", "", "", "");
+            verify(repository, never()).insertProfileSubmission(anyLong(), anyInt(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString());
+            verify(repository).insertOperation(eq(10L), isNull(), eq("TEACHER_PROFILE_UPDATE_PENDING"), anyString(), anyString());
+            verify(repository).insertAudit(eq(10L), isNull(), eq("TEACHER_PUBLIC_PROFILE_VERSION"), eq(1L),
+                eq("TEACHER_PROFILE_UPDATE_PENDING"), anyString(), anyString(), anyLong());
+        }
     }
     @ParameterizedTest @ValueSource(strings = {"DRAFT", "REJECTED", "APPROVED"})
     void reviewedOrDraftProfileCanSubmit(String status) {
         profile.setReviewStatus(status);
         service.updateProfile(actor, "current", new UpdateTeacherProfileRequest());
-        if ("DRAFT".equals(status)) verify(repository).updateDraftProfile(1L, 1, "", "");
-        else verify(repository).insertProfileSubmission(1L, 2, "", "", 10L);
+        if ("DRAFT".equals(status)) verify(repository).updateDraftProfile(1L, 1, "", "", "", "", "", "");
+        else verify(repository).insertProfileSubmission(1L, 2, "", "", "", "", "", "");
     }
 }

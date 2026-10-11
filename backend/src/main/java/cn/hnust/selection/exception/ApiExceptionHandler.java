@@ -14,6 +14,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.validation.ConstraintViolationException;
 import java.util.ArrayList;
@@ -28,6 +30,8 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
     /** 将 Service 主动声明的业务错误转换成其指定的 HTTP 状态与错误码。 */
     @ExceptionHandler(ApiException.class)
     public org.springframework.http.ResponseEntity<Result<?>> handleApiException(ApiException exception) {
@@ -84,7 +88,10 @@ public class ApiExceptionHandler {
 
     /** 未分类异常不向客户端暴露异常类名、SQL 或堆栈。 */
     @ExceptionHandler(Exception.class)
-    public org.springframework.http.ResponseEntity<Result<?>> handleUnexpected(Exception exception) {
+    public org.springframework.http.ResponseEntity<Result<?>> handleUnexpected(
+        Exception exception, javax.servlet.http.HttpServletRequest request) {
+        // 只记录方法和路径，不记录查询参数；完整堆栈保留在后端日志，响应仍隐藏内部细节。
+        LOGGER.error("Unhandled API exception for {} {}", request.getMethod(), request.getRequestURI(), exception);
         return response(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务暂时无法处理请求", null);
     }
 

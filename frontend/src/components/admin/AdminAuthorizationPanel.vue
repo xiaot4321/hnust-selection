@@ -9,6 +9,7 @@ const props = defineProps<{
   adminManagerCollegeId: number | null
   authorizedColleges: CollegeOption[]
   initialTargetAccountId?: string
+  targetSelectionRevision: number
 }>()
 
 // 默认选中总管理员所属学院；更换会话或目录后若默认学院不在列表中，则选第一所可用学院。
@@ -39,9 +40,14 @@ const {
   revokeAuthorization,
 } = useAdminAuthorizations(() => props.canManage, () => selectedCollegeId.value)
 
-// 刚创建管理员后把服务端回执中的账号编号带入授权面板，操作者仍需主动查询并选择范围。
-watch(() => props.initialTargetAccountId, (accountId) => {
-  if (accountId) form.targetAccountId = accountId
+const targetSelectionMessage = ref('')
+
+// 创建账号或从目录选择后带入目标编号，并明确提示下一步操作。
+watch(() => [props.initialTargetAccountId, props.targetSelectionRevision] as const, ([accountId]) => {
+  if (accountId) {
+    form.targetAccountId = accountId
+    targetSelectionMessage.value = `目标管理员账号已设为 ${accountId}，请继续配置业务能力和授权依据。`
+  }
 }, { immediate: true })
 
 /** 保留能力只能只读展示；常规授权接口不允许修改它。 */
@@ -89,7 +95,11 @@ function canRevoke(authorization: ManagedAdminAuthorization): boolean {
         type="text"
         placeholder="例如 7301"
         required
+        @input="targetSelectionMessage = ''"
       />
+      <p v-if="targetSelectionMessage" class="admin-auth-field-note target-selection-message" role="status">
+        {{ targetSelectionMessage }}
+      </p>
 
       <label for="admin-auth-status">授权记录状态</label>
       <select id="admin-auth-status" v-model="form.status">
@@ -310,6 +320,11 @@ function canRevoke(authorization: ManagedAdminAuthorization): boolean {
   color: var(--hnust-faint);
   font-size: 9px;
   line-height: 1.55;
+}
+
+.target-selection-message {
+  color: var(--hnust-blue-dark);
+  font-size: 11px;
 }
 
 .capability-summary {

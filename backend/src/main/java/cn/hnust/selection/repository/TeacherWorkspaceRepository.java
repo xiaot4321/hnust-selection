@@ -29,17 +29,25 @@ public class TeacherWorkspaceRepository {
             "published.research_directions AS published_directions, published.biography AS published_biography, " +
             "published.education_experience AS published_education_experience, published.work_experience AS published_work_experience, " +
             "published.courses AS published_courses, published.research_and_achievements AS published_research_and_achievements, " +
+            "published.avatar_file_id AS published_avatar_file_id, published_avatar.storage_key AS published_avatar_storage_key, " +
             "latest.review_status, latest.review_comment, latest.research_directions AS submitted_directions, " +
             "latest.biography AS submitted_biography, latest.education_experience AS submitted_education_experience, " +
             "latest.work_experience AS submitted_work_experience, latest.courses AS submitted_courses, " +
             "latest.research_and_achievements AS submitted_research_and_achievements, " +
+            "latest.avatar_file_id AS submitted_avatar_file_id, submitted_avatar.storage_key AS submitted_avatar_storage_key, " +
             "COALESCE(latest.version_no, 0) AS version_no, " +
             "COALESCE(latest.row_version, 0) AS profile_row_version " +
             "FROM teacher LEFT JOIN teacher_public_profile_version published " +
             "ON published.id = teacher.current_public_profile_version_id AND published.published_at IS NOT NULL " +
             "LEFT JOIN teacher_public_profile_version latest ON latest.teacher_id = teacher.id " +
             "AND latest.version_no = (SELECT MAX(candidate.version_no) FROM teacher_public_profile_version candidate " +
-            "WHERE candidate.teacher_id = teacher.id) WHERE teacher.id = ?";
+            "WHERE candidate.teacher_id = teacher.id) " +
+            "LEFT JOIN managed_file published_avatar ON published_avatar.id = published.avatar_file_id " +
+            "AND published_avatar.owner_account_id = teacher.account_id AND published_avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' " +
+            "AND published_avatar.file_status = 'AVAILABLE' " +
+            "LEFT JOIN managed_file submitted_avatar ON submitted_avatar.id = latest.avatar_file_id " +
+            "AND submitted_avatar.owner_account_id = teacher.account_id AND submitted_avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' " +
+            "AND submitted_avatar.file_status = 'AVAILABLE' WHERE teacher.id = ?";
         List<TeacherProfileVO> rows = jdbc.query(sql, (rs, n) -> {
             TeacherProfileVO value = new TeacherProfileVO();
             value.setTeacherId(rs.getLong("id")); value.setEmployeeNo(rs.getString("employee_no"));
@@ -50,6 +58,9 @@ public class TeacherWorkspaceRepository {
             value.setPublishedWorkExperience(rs.getString("published_work_experience"));
             value.setPublishedCourses(rs.getString("published_courses"));
             value.setPublishedResearchAndAchievements(rs.getString("published_research_and_achievements"));
+            long publishedAvatarId = rs.getLong("published_avatar_file_id");
+            value.setPublishedAvatarFileId(rs.wasNull() ? null : Long.valueOf(publishedAvatarId));
+            value.setPublishedAvatarStorageKey(rs.getString("published_avatar_storage_key"));
             value.setReviewStatus(rs.getString("review_status")); value.setReviewComment(rs.getString("review_comment"));
             value.setSubmittedResearchDirections(rs.getString("submitted_directions"));
             value.setSubmittedBiography(rs.getString("submitted_biography")); value.setVersionNo(rs.getInt("version_no"));
@@ -57,7 +68,11 @@ public class TeacherWorkspaceRepository {
             value.setSubmittedWorkExperience(rs.getString("submitted_work_experience"));
             value.setSubmittedCourses(rs.getString("submitted_courses"));
             value.setSubmittedResearchAndAchievements(rs.getString("submitted_research_and_achievements"));
-            value.setEtag(profileEtag(value.getTeacherId(), value.getVersionNo(), rs.getLong("profile_row_version"))); return value;
+            long submittedAvatarId = rs.getLong("submitted_avatar_file_id");
+            value.setSubmittedAvatarFileId(rs.wasNull() ? null : Long.valueOf(submittedAvatarId));
+            value.setSubmittedAvatarStorageKey(rs.getString("submitted_avatar_storage_key"));
+            value.setProfileRowVersion(Long.valueOf(rs.getLong("profile_row_version")));
+            value.setEtag(profileEtag(value.getTeacherId(), value.getVersionNo(), value.getProfileRowVersion().longValue())); return value;
         }, teacherId);
         return rows.isEmpty() ? Optional.<TeacherProfileVO>empty() : Optional.of(rows.get(0));
     }
@@ -68,21 +83,71 @@ public class TeacherWorkspaceRepository {
         return !rows.isEmpty();
     }
 
+    public Long insertTeacherProfileAvatar(Long accountId, String filename, String mediaType, long size,
+        String digest, String storageKey) {
+        KeyHolder key = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("INSERT INTO managed_file " +
+                "(owner_account_id, purpose_code, original_filename, media_type, file_size_bytes, content_digest, " +
+                "storage_key, uploaded_at, retention_basis, retention_until, file_status) " +
+                "VALUES (?, 'TEACHER_PROFILE_AVATAR', ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), 'PUBLIC_PROFILE', NULL, 'AVAILABLE')",
+                Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, accountId); statement.setString(2, filename); statement.setString(3, mediaType);
+            statement.setLong(4, size); statement.setString(5, digest); statement.setString(6, storageKey);
+            return statement;
+        }, key);
+        Number id = key.getKey();
+        if (id == null) throw new IllegalStateException("No teacher avatar file id returned");
+        return Long.valueOf(id.longValue());
+    }
+
     public void updateDraftProfile(Long teacherId, int versionNo, String directions, String biography,
         String educationExperience, String workExperience, String courses, String researchAndAchievements) {
+        updateDraftProfile(teacherId, versionNo, directions, biography, educationExperience, workExperience,
+            courses, researchAndAchievements, null);
+    }
+
+    public void updateDraftProfile(Long teacherId, int versionNo, String directions, String biography,
+        String educationExperience, String workExperience, String courses, String researchAndAchievements,
+        Long avatarFileId) {
         jdbc.update("UPDATE teacher_public_profile_version SET research_directions = ?, biography = ?, " +
-            "education_experience = ?, work_experience = ?, courses = ?, research_and_achievements = ?, " +
+            "education_experience = ?, work_experience = ?, courses = ?, research_and_achievements = ?, avatar_file_id = ?, " +
             "review_status = 'PENDING_REVIEW', submitted_at = UTC_TIMESTAMP(3), review_comment = NULL, " +
             "row_version = row_version + 1 WHERE teacher_id = ? AND version_no = ? AND review_status = 'DRAFT'",
-            directions, biography, educationExperience, workExperience, courses, researchAndAchievements, teacherId, versionNo);
+            directions, biography, educationExperience, workExperience, courses, researchAndAchievements, avatarFileId, teacherId, versionNo);
+    }
+
+    public int updatePendingProfile(Long teacherId, int versionNo, long expectedRowVersion, String directions,
+        String biography, String educationExperience, String workExperience, String courses,
+        String researchAndAchievements) {
+        return updatePendingProfile(teacherId, versionNo, expectedRowVersion, directions, biography,
+            educationExperience, workExperience, courses, researchAndAchievements, null);
+    }
+
+    public int updatePendingProfile(Long teacherId, int versionNo, long expectedRowVersion, String directions,
+        String biography, String educationExperience, String workExperience, String courses,
+        String researchAndAchievements, Long avatarFileId) {
+        return jdbc.update("UPDATE teacher_public_profile_version SET research_directions = ?, biography = ?, " +
+            "education_experience = ?, work_experience = ?, courses = ?, research_and_achievements = ?, avatar_file_id = ?, " +
+            "submitted_at = UTC_TIMESTAMP(3), row_version = row_version + 1 " +
+            "WHERE teacher_id = ? AND version_no = ? AND review_status = 'PENDING_REVIEW' AND row_version = ?",
+            directions, biography, educationExperience, workExperience, courses, researchAndAchievements,
+            avatarFileId, teacherId, versionNo, Long.valueOf(expectedRowVersion));
     }
 
     public void insertProfileSubmission(Long teacherId, int versionNo, String directions, String biography,
         String educationExperience, String workExperience, String courses, String researchAndAchievements) {
+        insertProfileSubmission(teacherId, versionNo, directions, biography, educationExperience, workExperience,
+            courses, researchAndAchievements, null);
+    }
+
+    public void insertProfileSubmission(Long teacherId, int versionNo, String directions, String biography,
+        String educationExperience, String workExperience, String courses, String researchAndAchievements,
+        Long avatarFileId) {
         jdbc.update("INSERT INTO teacher_public_profile_version (teacher_id, version_no, research_directions, biography, " +
-            "education_experience, work_experience, courses, research_and_achievements, review_status, submitted_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', UTC_TIMESTAMP(3))",
-            teacherId, versionNo, directions, biography, educationExperience, workExperience, courses, researchAndAchievements);
+            "education_experience, work_experience, courses, research_and_achievements, avatar_file_id, review_status, submitted_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', UTC_TIMESTAMP(3))",
+            teacherId, versionNo, directions, biography, educationExperience, workExperience, courses, researchAndAchievements, avatarFileId);
     }
 
     public List<TeacherApplicationVO> listRoundApplications(Long teacherId, Long batchId, int roundNo, int pageNo, int pageSize) {
@@ -488,13 +553,13 @@ public class TeacherWorkspaceRepository {
             "WHERE eligibility_slot.academic_year_id = batch.academic_year_id " +
             "AND eligibility_slot.college_id = batch.college_id AND eligibility_slot.teacher_id = quota.teacher_id) " +
             "OR EXISTS (SELECT 1 FROM supplement_application application " +
-            "JOIN annual_eligibility historic ON historic.academic_year_id = batch.academic_year_id " +
-            "AND historic.college_id = batch.college_id AND historic.teacher_id = quota.teacher_id " +
-            "AND historic.student_id IS NULL AND historic.eligibility_status = 'ELIGIBLE' " +
-            "AND (historic.valid_from IS NULL OR historic.valid_from <= application.submitted_at) " +
-            "AND (historic.valid_to IS NULL OR application.submitted_at < historic.valid_to) " +
+            "JOIN annual_eligibility historic ON historic.student_id IS NULL " +
             "WHERE application.supplement_window_id = window.id AND application.batch_teacher_quota_id = quota.id " +
-            "AND application.application_status = 'IN_REVIEW'))", Integer.class,
+            "AND application.application_status = 'IN_REVIEW' " +
+            "AND historic.academic_year_id = batch.academic_year_id AND historic.college_id = batch.college_id " +
+            "AND historic.teacher_id = quota.teacher_id AND historic.eligibility_status = 'ELIGIBLE' " +
+            "AND (historic.valid_from IS NULL OR historic.valid_from <= application.submitted_at) " +
+            "AND (historic.valid_to IS NULL OR application.submitted_at < historic.valid_to)))", Integer.class,
             batchId, teacherId);
         return count != null && count.intValue() > 0;
     }

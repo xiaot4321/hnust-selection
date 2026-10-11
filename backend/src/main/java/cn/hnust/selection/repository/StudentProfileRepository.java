@@ -47,8 +47,7 @@ public class StudentProfileRepository {
                 long rawSize = rs.getLong("resume_size_bytes");
                 Long size = rs.wasNull() ? null : rawSize;
                 profile.setResume(new StudentProfileVO.StudentResumeVO(rawFileId,
-                    rs.getString("resume_file_name"), size, rs.getString("resume_uploaded_at"),
-                    toScanStatus(rs.getString("resume_status"))));
+                    rs.getString("resume_file_name"), size, rs.getString("resume_uploaded_at")));
             }
             return profile;
         }
@@ -59,7 +58,7 @@ public class StudentProfileRepository {
             "m.id AS major_id, m.major_code, m.name AS major_name, s.degree_type, s.classification_version, " +
             "a.account_status, COALESCE(p.version_no, 0) AS profile_version, p.biography, p.contact_text, " +
             "f.id AS resume_file_id, f.original_filename AS resume_file_name, f.file_size_bytes AS resume_size_bytes, " +
-            "DATE_FORMAT(f.uploaded_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS resume_uploaded_at, f.file_status AS resume_status " +
+            "DATE_FORMAT(f.uploaded_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS resume_uploaded_at " +
             "FROM student s JOIN account a ON a.id = s.account_id " +
             "JOIN college c ON c.id = s.college_id JOIN major m ON m.id = s.major_id " +
             "LEFT JOIN student_profile_version p ON p.student_id = s.id AND p.version_no = " +
@@ -130,7 +129,7 @@ public class StudentProfileRepository {
             PreparedStatement ps = connection.prepareStatement("INSERT INTO managed_file " +
                 "(owner_account_id, purpose_code, original_filename, media_type, file_size_bytes, content_digest, " +
                 "storage_key, uploaded_at, retention_basis, file_status) " +
-                "VALUES (?, 'STUDENT_RESUME', ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), 'STUDENT_PROFILE', 'PENDING')",
+                "VALUES (?, 'STUDENT_RESUME', ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), 'STUDENT_PROFILE', 'AVAILABLE')",
                 Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1, accountId); ps.setString(2, filename); ps.setString(3, mediaType);
             ps.setLong(4, size); ps.setString(5, digest); ps.setString(6, storageKey); return ps;
@@ -144,7 +143,7 @@ public class StudentProfileRepository {
         jdbcTemplate.update("INSERT INTO audit_event(actor_account_id, actor_kind, actor_role, scope_basis, object_type, " +
             "object_id, action_code, after_values_text, occurred_at, business_operation_id) " +
             "VALUES (?, 'STUDENT', 'STUDENT', ?, 'MANAGED_FILE', ?, 'STUDENT_RESUME_UPLOAD', ?, UTC_TIMESTAMP(3), ?)",
-            accountId, "studentId=" + studentId, fileId, "{\"fileStatus\":\"PENDING\"}", operationId);
+            accountId, "studentId=" + studentId, fileId, "{\"fileStatus\":\"AVAILABLE\"}", operationId);
     }
 
     public void completeResumeUploadOperation(Long operationId) {
@@ -155,10 +154,10 @@ public class StudentProfileRepository {
 
     public Optional<StudentProfileVO.StudentResumeVO> findStudentResume(Long fileId, Long accountId) {
         List<StudentProfileVO.StudentResumeVO> rows = jdbcTemplate.query("SELECT id, original_filename, file_size_bytes, " +
-            "DATE_FORMAT(uploaded_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS uploaded_at, file_status FROM managed_file " +
+            "DATE_FORMAT(uploaded_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS uploaded_at FROM managed_file " +
             "WHERE id = ? AND owner_account_id = ? AND purpose_code = 'STUDENT_RESUME'", (rs, n) ->
             new StudentProfileVO.StudentResumeVO(rs.getLong("id"), rs.getString("original_filename"),
-                Long.valueOf(rs.getLong("file_size_bytes")), rs.getString("uploaded_at"), toScanStatus(rs.getString("file_status"))),
+                Long.valueOf(rs.getLong("file_size_bytes")), rs.getString("uploaded_at")),
             fileId, accountId);
         return rows.isEmpty() ? Optional.<StudentProfileVO.StudentResumeVO>empty() : Optional.of(rows.get(0));
     }
@@ -177,11 +176,4 @@ public class StudentProfileRepository {
         return value == null ? "" : value;
     }
 
-    private static String toScanStatus(String storedStatus) {
-        if ("PENDING".equals(storedStatus) || "AVAILABLE".equals(storedStatus) || "REJECTED".equals(storedStatus)) {
-            return storedStatus;
-        }
-        // Не отображать неизвестный внутренний статус как可下载文件；返回 REJECTED 使前端 fail-closed。
-        return "REJECTED";
-    }
 }

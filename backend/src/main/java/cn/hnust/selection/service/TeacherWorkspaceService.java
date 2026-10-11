@@ -14,10 +14,13 @@ import cn.hnust.selection.vo.TeacherProfileVO;
 import cn.hnust.selection.vo.TeacherSupplementApplicationVO;
 import cn.hnust.selection.vo.TeacherBulkDecisionAcceptedVO;
 import cn.hnust.selection.vo.TeacherBulkOperationVO;
+import org.springframework.web.multipart.MultipartFile;
 
 public interface TeacherWorkspaceService {
     TeacherProfileVO getProfile(AccountPrincipal actor);
     TeacherProfileVO updateProfile(AccountPrincipal actor, String ifMatch, UpdateTeacherProfileRequest request);
+    TeacherProfileVO updateProfileWithAvatar(AccountPrincipal actor, String ifMatch, UpdateTeacherProfileRequest request,
+        MultipartFile avatar, boolean clearAvatar);
     PageResult<TeacherApplicationVO> roundApplications(AccountPrincipal actor, Long batchId, int roundNo, int pageNo, int pageSize);
     TeacherDecisionVO decideRoundApplication(AccountPrincipal actor, Long batchId, Long applicationId,
         DecideTeacherApplicationRequest request, String idempotencyKey);

@@ -53,6 +53,27 @@
             <artifactId>jsoup</artifactId>
             <version>1.23.2</version>
         </dependency>
+        <dependency>
+            <groupId>com.aliyun.oss</groupId>
+            <artifactId>aliyun-sdk-oss</artifactId>
+            <version>3.18.5</version>
+        </dependency>
+        <!-- JDK 11+ no longer bundles JAXB; OSS SDK still uses javax.xml.bind at runtime. -->
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <version>2.3.8</version>
+        </dependency>
+        <dependency>
+            <groupId>javax.activation</groupId>
+            <artifactId>javax.activation-api</artifactId>
+            <version>1.2.0</version>
+        </dependency>
         <!-- POI 5.5.x still supports the project's Java 8 baseline and reads XLSX imports. -->
         <dependency>
             <groupId>org.apache.poi</groupId>

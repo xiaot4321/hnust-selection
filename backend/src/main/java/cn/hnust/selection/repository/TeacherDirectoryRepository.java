@@ -45,6 +45,8 @@ public class TeacherDirectoryRepository {
         "JOIN account teacher_account ON teacher_account.id = teacher.account_id " +
         "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
         "AND profile.teacher_id = teacher.id " +
+        "LEFT JOIN managed_file avatar ON avatar.id = profile.avatar_file_id AND avatar.owner_account_id = teacher.account_id " +
+        "AND avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' AND avatar.file_status = 'AVAILABLE' " +
         "JOIN teacher_application_scope_slot slot ON slot.batch_id = batch.id AND slot.teacher_id = teacher.id " +
         "JOIN teacher_application_scope_version scope ON scope.id = slot.scope_version_id " +
         "AND scope.batch_id = batch.id AND scope.teacher_id = teacher.id " +
@@ -79,7 +81,7 @@ public class TeacherDirectoryRepository {
     public List<TeacherRow> findTeachers(Long batchId, Long studentId, String keyword, String researchDirection,
         Long majorId, Integer degreeBit, Boolean canApply, int pageNo, int pageSize) {
         StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
-            "profile.research_directions, profile.biography, scope.allowed_degree_mask, slot.scope_version_id, ");
+            "profile.research_directions, profile.biography, avatar.storage_key AS avatar_storage_key, scope.allowed_degree_mask, slot.scope_version_id, ");
         sql.append("CASE WHEN ").append(CAN_APPLY).append(" THEN 1 ELSE 0 END AS can_apply");
         sql.append(FROM_AND_WHERE);
         List<Object> args = new ArrayList<Object>();
@@ -92,7 +94,7 @@ public class TeacherDirectoryRepository {
         return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
             rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
             rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
-            rs.getLong("scope_version_id"), rs.getBoolean("can_apply")), args.toArray());
+            rs.getLong("scope_version_id"), rs.getBoolean("can_apply"), rs.getString("avatar_storage_key")), args.toArray());
     }
 
     public long countTeachers(Long batchId, Long studentId, String keyword, String researchDirection,
@@ -109,14 +111,15 @@ public class TeacherDirectoryRepository {
     public Optional<TeacherRow> findTeacher(Long batchId, Long studentId, Long teacherId) {
         StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
             "profile.research_directions, profile.biography, profile.education_experience, profile.work_experience, " +
-            "profile.courses, profile.research_and_achievements, scope.allowed_degree_mask, slot.scope_version_id, ");
+            "profile.courses, profile.research_and_achievements, avatar.storage_key AS avatar_storage_key, scope.allowed_degree_mask, slot.scope_version_id, ");
         sql.append("CASE WHEN ").append(CAN_APPLY).append(" THEN 1 ELSE 0 END AS can_apply");
         sql.append(FROM_AND_WHERE).append(" AND teacher.id = ?");
         List<TeacherRow> rows = jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
             rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
             rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
             rs.getLong("scope_version_id"), rs.getBoolean("can_apply"), rs.getString("education_experience"),
-            rs.getString("work_experience"), rs.getString("courses"), rs.getString("research_and_achievements")), studentId, batchId, teacherId);
+            rs.getString("work_experience"), rs.getString("courses"), rs.getString("research_and_achievements"),
+            rs.getString("avatar_storage_key")), studentId, batchId, teacherId);
         return rows.isEmpty() ? Optional.<TeacherRow>empty() : Optional.of(rows.get(0));
     }
 
@@ -218,22 +221,29 @@ public class TeacherDirectoryRepository {
         private final String workExperience;
         private final String courses;
         private final String researchAndAchievements;
+        private final String avatarStorageKey;
         public TeacherRow(Long teacherId, String employeeNo, String fullName, String collegeName, String researchDirections,
             String biography, Integer degreeMask, Long scopeVersionId, boolean canApply) {
+            this(teacherId, employeeNo, fullName, collegeName, researchDirections, biography, degreeMask, scopeVersionId, canApply, null);
+        }
+        public TeacherRow(Long teacherId, String employeeNo, String fullName, String collegeName, String researchDirections,
+            String biography, Integer degreeMask, Long scopeVersionId, boolean canApply, String avatarStorageKey) {
             this.teacherId = teacherId; this.employeeNo = employeeNo; this.fullName = fullName;
             this.collegeName = collegeName;
             this.researchDirections = researchDirections; this.biography = biography; this.degreeMask = degreeMask;
             this.scopeVersionId = scopeVersionId; this.canApply = canApply;
             this.educationExperience = null; this.workExperience = null; this.courses = null; this.researchAndAchievements = null;
+            this.avatarStorageKey = avatarStorageKey;
         }
         public TeacherRow(Long teacherId, String employeeNo, String fullName, String collegeName, String researchDirections,
             String biography, Integer degreeMask, Long scopeVersionId, boolean canApply, String educationExperience,
-            String workExperience, String courses, String researchAndAchievements) {
+            String workExperience, String courses, String researchAndAchievements, String avatarStorageKey) {
             this.teacherId = teacherId; this.employeeNo = employeeNo; this.fullName = fullName;
             this.collegeName = collegeName; this.researchDirections = researchDirections; this.biography = biography;
             this.degreeMask = degreeMask; this.scopeVersionId = scopeVersionId; this.canApply = canApply;
             this.educationExperience = educationExperience; this.workExperience = workExperience;
             this.courses = courses; this.researchAndAchievements = researchAndAchievements;
+            this.avatarStorageKey = avatarStorageKey;
         }
         public Long getTeacherId() { return teacherId; }
         public String getEmployeeNo() { return employeeNo; }
@@ -248,6 +258,7 @@ public class TeacherDirectoryRepository {
         public String getWorkExperience() { return workExperience; }
         public String getCourses() { return courses; }
         public String getResearchAndAchievements() { return researchAndAchievements; }
+        public String getAvatarStorageKey() { return avatarStorageKey; }
     }
 
     private static class ScopeMajorRow {

@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
-import TeacherAllocationPanel from './TeacherAllocationPanel.vue'
 import {
   selectionBatchService,
   type AcademicYearOption,
   type BatchCollegeOption,
   type BatchDetail,
+  type BatchMajor,
   type BatchStage,
   type BatchSummary,
   type BatchStatistics,
   type TeacherQuota,
-  type SupplementTeacher,
 } from '../../services/selectionBatchService'
 
 const props = defineProps<{ canManage: boolean; canManagePersonnel?: boolean }>()
@@ -23,16 +22,17 @@ const batches = ref<BatchSummary[]>([])
 const selectedCollegeId = ref<number | null>(null)
 const selectedBatchId = ref<number | null>(null)
 const detail = ref<BatchDetail | null>(null)
+const scheduleEditor = ref<HTMLFormElement | null>(null)
+const quotaEditor = ref<HTMLElement | null>(null)
+const scheduleEditorOpen = ref(false)
+const scheduleEditorOpening = ref(false)
 const quotas = ref<TeacherQuota[]>([])
+const batchMajors = ref<BatchMajor[]>([])
 const statistics = ref<BatchStatistics | null>(null)
-const hasTeacherDirectoryAccess = ref(false)
-const supplementTeachers = ref<SupplementTeacher[]>([])
-const supplementTeacherIds = ref<number[]>([])
 const quotaDrafts = reactive<Record<number, string>>({})
 const schedule = reactive<Record<string, { start: string; end: string }>>({})
 const createForm = reactive({ academicYearId: '', batchCode: '', name: '', supplementPlanned: false, appendReason: '' })
 const editForm = reactive({ name: '', appendReason: '', scheduleReason: '' })
-const supplementReason = ref('')
 const roundExtendNo = ref<number | null>(null)
 const roundNewEnd = ref('')
 const roundExtendReason = ref('')
@@ -40,13 +40,39 @@ const roundReopenNo = ref<number | null>(null)
 const roundReopenEnd = ref('')
 const roundReopenReason = ref('')
 const loading = ref(false)
+const directoryLoading = ref(false)
 const saving = ref(false)
+const lifecycleSaving = ref(false)
+const lifecycleAction = ref<BatchLifecycleAction | null>(null)
 const errorMessage = ref('')
 const successMessage = ref('')
+let collegeDataRequestId = 0
+let selectedBatchRequestId = 0
+let activeLoadCount = 0
+
+type BatchLifecycleAction = 'publish' | 'unpublish' | 'start' | 'pause' | 'resume' | 'cancel' | 'archive' | 'unarchive'
+
+function beginLoading(): () => void {
+  activeLoadCount += 1
+  loading.value = true
+  let finished = false
+  return () => {
+    if (finished) return
+    finished = true
+    activeLoadCount = Math.max(0, activeLoadCount - 1)
+    loading.value = activeLoadCount > 0
+  }
+}
+
+/** API 的 Long ID 在不同 JSON 配置下可能以数字或字符串传输，比较时统一按文本处理。 */
+function sameBatchId(left: number | null | undefined, right: number | null | undefined): boolean {
+  return left !== null && left !== undefined && right !== null && right !== undefined && String(left) === String(right)
+}
 
 // 这些计算值只控制页面展示；接口授权、学院/批次范围和状态仍由后端逐请求验证。
 const selectedCollege = computed(() => colleges.value.find((item) => item.id === selectedCollegeId.value) ?? null)
 const selectedBatch = computed(() => detail.value?.batch ?? null)
+const selectedBatchOption = computed(() => batches.value.find((item) => sameBatchId(item.id, selectedBatchId.value)) ?? null)
 const stageOrder = ['FILLING', 'ROUND_1', 'ROUND_2', 'ROUND_3', 'SUPPLEMENT']
 const visibleStages = computed(() => stageOrder.filter((code) => code !== 'SUPPLEMENT' || selectedBatch.value?.supplementPlanned))
 const stageNames: Record<string, string> = {
@@ -65,10 +91,26 @@ const scheduleErrors = computed(() => {
     const start = current?.start ? new Date(`${current.start}+08:00`).getTime() : null
     const end = current?.end ? new Date(`${current.end}+08:00`).getTime() : null
     const previousEnd = previous?.end ? new Date(`${previous.end}+08:00`).getTime() : null
+    const stored = detail.value?.stages.find((item) => item.stageCode === stage)
     const error: { start?: string; end?: string } = {}
     if (selectedBatch.value?.status === 'DRAFT') {
       if (start !== null && start < currentTime.value) error.start = '开始时间不能早于当前时间，请选择未来时间。'
       if (end !== null && end < currentTime.value) error.end = '结束时间不能早于当前时间。'
+    }
+    if (['ACTIVE', 'PAUSED'].includes(selectedBatch.value?.status ?? '') && stored) {
+      const startChanged = current?.start !== toLocalInput(stored.plannedStartAt)
+      const endChanged = current?.end !== toLocalInput(stored.plannedEndAt)
+      if (stored.status !== 'OPEN' && stored.status !== 'CLOSED' && startChanged && start !== null && start < currentTime.value) {
+        error.start = '未开始阶段的新开始时间不能早于当前时间。'
+      }
+      if (stored.status === 'OPEN' && endChanged && end !== null) {
+        if (selectedBatch.value?.status === 'PAUSED' && end <= currentTime.value) {
+          error.end = '暂停期间调整的当前阶段结束时间必须晚于当前时间。'
+        } else if (selectedBatch.value?.status === 'ACTIVE' && stored.plannedEndAt &&
+          (end <= currentTime.value || new Date(stored.plannedEndAt).getTime() <= currentTime.value || end <= new Date(stored.plannedEndAt).getTime())) {
+          error.end = '运行中的当前阶段只能延长结束时间。'
+        }
+      }
     }
     if (start !== null && !Number.isFinite(start)) error.start = '请填写有效的开始时间。'
     if (end !== null && !Number.isFinite(end)) error.end = '请填写有效的结束时间。'
@@ -102,17 +144,31 @@ function minimumStageTime(stage: string, field: 'start' | 'end'): string | undef
 const statusNames: Record<string, string> = {
   DRAFT: '草稿', SCHEDULED: '已发布', ACTIVE: '运行中', PAUSED: '已暂停', COMPLETED: '已完成', ARCHIVED: '已归档', CANCELLED: '已取消',
 }
-const isEditable = computed(() => props.canManage && ['DRAFT', 'SCHEDULED', 'ACTIVE'].includes(selectedBatch.value?.status ?? ''))
-const canPublish = computed(() => props.canManage && selectedBatch.value?.status === 'DRAFT')
-const canStart = computed(() => props.canManage && selectedBatch.value?.status === 'SCHEDULED')
+const isEditable = computed(() => props.canManage && ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatch.value?.status ?? ''))
+function canEditScheduleField(stageCode: string, field: 'start' | 'end'): boolean {
+  if (!isEditable.value) return false
+  if (['DRAFT', 'SCHEDULED'].includes(selectedBatch.value?.status ?? '')) return true
+  const stageStatus = detail.value?.stages.find((stage) => stage.stageCode === stageCode)?.status
+  if (stageStatus === 'CLOSED') return false
+  if (stageStatus === 'OPEN') return field === 'end'
+  return true
+}
 const canCreate = computed(() => props.canManage && selectedCollege.value?.canCreateBatch === true)
+const scheduleReady = computed(() => scheduleComplete.value && !hasScheduleErrors.value && scheduleSaved.value)
+const quotaReady = computed(() => quotas.value.some((row) => row.quotaLimit !== null))
+const majorsReady = computed(() => batchMajors.value.length > 0)
+const appendReasonRequired = computed(() => {
+  const academicYearId = Number(createForm.academicYearId)
+  return selectedCollegeId.value !== null && Number.isSafeInteger(academicYearId)
+    && batches.value.some((batch) => batch.collegeId === selectedCollegeId.value
+      && batch.academicYearId === academicYearId)
+})
 const openRounds = computed(() => statistics.value?.rounds.filter((round) => round.stageStatus === 'OPEN') ?? [])
 const reopenableRounds = computed(() => (detail.value?.stages ?? []).flatMap((stage) => {
   const match = /^ROUND_([1-3])$/.exec(stage.stageCode)
   if (!match || stage.status !== 'CLOSED' || stage.closeReason !== `ROUND_${match[1]}_DEADLINE`) return []
   return [{ roundNo: Number(match[1]) }]
 }))
-const hasSupplementSchedule = computed(() => detail.value?.stages.some((stage) => stage.stageCode === 'SUPPLEMENT' && stage.plannedEndAt) ?? false)
 
 function friendlyError(error: unknown): string {
   if (error instanceof ApiError) return error.message
@@ -131,99 +187,196 @@ function toLocalInput(value: string | null): string {
 /** datetime-local 约定按上海时区解释，再序列化为带 Z 的 UTC 时间交给 API。 */
 function toUtc(value: string): string { return new Date(`${value}:00+08:00`).toISOString() }
 
+function focusScheduleEditor(): void {
+  scheduleEditor.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  scheduleEditor.value?.querySelector<HTMLInputElement>('input:not([disabled])')?.focus({ preventScroll: true })
+}
+
+function focusQuotaEditor(): void {
+  quotaEditor.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  quotaEditor.value?.querySelector<HTMLInputElement>('input:not([disabled])')?.focus({ preventScroll: true })
+}
+
+async function toggleScheduleEditor(): Promise<void> {
+  const batch = selectedBatchOption.value
+  if (!batch || !['SCHEDULED', 'ACTIVE', 'PAUSED'].includes(batch.status)) return
+  if (scheduleEditorOpen.value) {
+    scheduleEditorOpen.value = false
+    return
+  }
+  if (scheduleEditorOpening.value) return
+  const batchId = batch.id
+  scheduleEditorOpening.value = true
+  try {
+    if (!sameBatchId(selectedBatch.value?.id, batchId)) await loadSelectedBatch()
+    if (!sameBatchId(selectedBatchId.value, batchId) || !sameBatchId(selectedBatch.value?.id, batchId)) return
+    scheduleEditorOpen.value = true
+    await nextTick()
+    focusScheduleEditor()
+  } finally { scheduleEditorOpening.value = false }
+}
+
 /** 首次加载授权学院，并默认选中第一个可访问项。 */
 async function loadColleges(): Promise<void> {
-  loading.value = true
+  const finishLoading = beginLoading()
   try {
     colleges.value = await selectionBatchService.colleges()
     if (!selectedCollegeId.value && colleges.value.length) selectedCollegeId.value = colleges.value[0].id
   } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { loading.value = false }
+  finally { finishLoading() }
 }
 
 /** 学院选择改变后并行加载学年和批次；若旧批次不再属于当前学院则切换到第一项。 */
 async function loadCollegeData(): Promise<void> {
-  if (!selectedCollegeId.value) { years.value = []; batches.value = []; return }
-  loading.value = true
+  const requestId = ++collegeDataRequestId
+  const collegeId = selectedCollegeId.value
+  if (!collegeId) {
+    directoryLoading.value = false
+    years.value = []; batches.value = []
+    return
+  }
+  directoryLoading.value = true
+  const finishLoading = beginLoading()
   errorMessage.value = ''
   try {
     const [nextYears, nextBatches] = await Promise.all([
-      selectionBatchService.academicYears(selectedCollegeId.value),
-      selectionBatchService.batches(selectedCollegeId.value),
+      selectionBatchService.academicYears(collegeId),
+      selectionBatchService.batches(collegeId),
     ])
+    if (requestId !== collegeDataRequestId || selectedCollegeId.value !== collegeId) return
     years.value = nextYears
     batches.value = nextBatches
     if (!createForm.academicYearId && nextYears.length) createForm.academicYearId = String(nextYears[0].id)
-    if (!nextBatches.some((item) => item.id === selectedBatchId.value)) {
+    if (!nextBatches.some((item) => sameBatchId(item.id, selectedBatchId.value))) {
       selectedBatchId.value = nextBatches[0]?.id ?? null
     }
-    if (!selectedBatchId.value) { detail.value = null; quotas.value = []; statistics.value = null }
-  } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { loading.value = false }
+    if (!selectedBatchId.value) { detail.value = null; quotas.value = []; batchMajors.value = []; statistics.value = null }
+  } catch (error) {
+    if (requestId === collegeDataRequestId) errorMessage.value = friendlyError(error)
+  } finally {
+    if (requestId === collegeDataRequestId) directoryLoading.value = false
+    finishLoading()
+  }
 }
 
 /** 批次选择改变后并行取详情和名额表，并把服务端数据映射到可编辑表单。 */
-async function loadSelectedBatch(): Promise<void> {
-  if (!selectedBatchId.value) { detail.value = null; quotas.value = []; statistics.value = null; return }
-  loading.value = true
+async function loadSelectedBatch(): Promise<BatchDetail | null> {
+  const requestId = ++selectedBatchRequestId
+  const batchId = selectedBatchId.value
+  if (!batchId) {
+    detail.value = null; quotas.value = []; batchMajors.value = []; statistics.value = null; editForm.scheduleReason = ''
+    return null
+  }
+  const finishLoading = beginLoading()
   errorMessage.value = ''
+  // 刷新同一批次时保留已加载详情，避免时间编辑器在请求期间消失。
+  // 只有切换到另一批次时才清空旧批次数据。
+  if (!sameBatchId(detail.value?.batch.id, batchId)) {
+    detail.value = null; quotas.value = []; batchMajors.value = []; statistics.value = null; editForm.scheduleReason = ''
+  }
   try {
-    const [loaded, rows, loadedStatistics] = await Promise.all([
-      selectionBatchService.batch(selectedBatchId.value), selectionBatchService.quotas(selectedBatchId.value),
-      selectionBatchService.statistics(selectedBatchId.value),
-    ])
-    detail.value = loaded
-    quotas.value = rows
-    statistics.value = loadedStatistics
-    if (!openRounds.value.some((round) => round.roundNo === roundExtendNo.value)) roundExtendNo.value = openRounds.value[0]?.roundNo ?? null
-    if (!reopenableRounds.value.some((round) => round.roundNo === roundReopenNo.value)) roundReopenNo.value = reopenableRounds.value[0]?.roundNo ?? null
-    supplementTeachers.value = loaded.batch.supplementPlanned
-      ? await selectionBatchService.supplementTeachers(loaded.batch.id) : []
-    supplementTeacherIds.value = supplementTeachers.value.filter((teacher) => teacher.permitted).map((teacher) => teacher.teacherId)
-    for (const row of rows) quotaDrafts[row.teacherId] = row.quotaLimit === null ? '' : String(row.quotaLimit)
+    const loaded = await selectionBatchService.batch(batchId)
+    if (requestId !== selectedBatchRequestId || !sameBatchId(selectedBatchId.value, batchId)) return null
+    applyBatchDetail(loaded)
     editForm.name = loaded.batch.name
     editForm.appendReason = loaded.batch.appendReason ?? ''
     for (const stage of loaded.stages) {
       schedule[stage.stageCode] = { start: toLocalInput(stage.plannedStartAt), end: toLocalInput(stage.plannedEndAt) }
     }
-  } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { loading.value = false }
+
+    // 详情决定生命周期视图；名额、统计或专业目录读失败时保留可用的排期/发布界面，并单独提示。
+    const [quotaResult, statisticsResult, majorsResult] = await Promise.allSettled([
+      selectionBatchService.quotas(batchId), selectionBatchService.statistics(batchId),
+      selectionBatchService.majorsForBatch(batchId),
+    ])
+    if (requestId !== selectedBatchRequestId || !sameBatchId(selectedBatchId.value, batchId)) return null
+    const loadWarnings: string[] = []
+    if (quotaResult.status === 'fulfilled') {
+      quotas.value = quotaResult.value
+      for (const row of quotaResult.value) quotaDrafts[row.teacherId] = row.quotaLimit === null ? '' : String(row.quotaLimit)
+    } else loadWarnings.push('导师名额')
+    if (statisticsResult.status === 'fulfilled') statistics.value = statisticsResult.value
+    else loadWarnings.push('统计')
+    if (majorsResult.status === 'fulfilled') batchMajors.value = majorsResult.value
+    else loadWarnings.push('专业目录')
+    if (!openRounds.value.some((round) => round.roundNo === roundExtendNo.value)) roundExtendNo.value = openRounds.value[0]?.roundNo ?? null
+    if (!reopenableRounds.value.some((round) => round.roundNo === roundReopenNo.value)) roundReopenNo.value = reopenableRounds.value[0]?.roundNo ?? null
+    if (loadWarnings.length) errorMessage.value = `批次详情已加载，但${loadWarnings.join('、')}读取失败，请稍后重试。`
+    return loaded
+  } catch (error) {
+    if (requestId === selectedBatchRequestId) errorMessage.value = friendlyError(error)
+    return null
+  } finally { finishLoading() }
 }
 
-/** 刷新导师设置所需的批次、名额和统计，保留尚未保存的排期输入。 */
-async function refreshTeacherSetup(): Promise<void> {
-  const batchId = selectedBatchId.value
-  const collegeId = selectedCollegeId.value
-  if (!batchId) return
-  loading.value = true
-  try {
-    const [fresh, rows, stats] = await Promise.all([
-      selectionBatchService.batch(batchId), selectionBatchService.quotas(batchId), selectionBatchService.statistics(batchId),
-    ])
-    if (selectedBatchId.value !== batchId || selectedCollegeId.value !== collegeId) return
-    detail.value = fresh; quotas.value = rows; statistics.value = stats
-    for (const row of rows) quotaDrafts[row.teacherId] = row.quotaLimit === null ? '' : String(row.quotaLimit)
-  } catch (error) {
-    if (selectedBatchId.value === batchId && selectedCollegeId.value === collegeId) errorMessage.value = friendlyError(error)
-  } finally { if (selectedBatchId.value === batchId && selectedCollegeId.value === collegeId) loading.value = false }
+/** 写接口返回的权威详情立即同步到详情区和批次选择器，避免等待手动刷新。 */
+function applyBatchDetail(updated: BatchDetail): void {
+  if (!sameBatchId(selectedBatchId.value, updated.batch.id)) return
+  detail.value = updated
+  batches.value = batches.value.map((batch) => sameBatchId(batch.id, updated.batch.id)
+    ? { ...batch, ...updated.batch }
+    : batch)
 }
 
 async function createBatch(): Promise<void> {
-  if (!selectedCollegeId.value || !createForm.academicYearId) return
+  if (saving.value || directoryLoading.value || !selectedCollegeId.value || !createForm.academicYearId) return
+  if (!years.value.some((year) => String(year.id) === createForm.academicYearId)) {
+    errorMessage.value = '请先选择有效学年。'
+    successMessage.value = ''
+    return
+  }
+  if (appendReasonRequired.value && !createForm.appendReason.trim()) {
+    errorMessage.value = '同一学院和学年已有批次，请填写追加批次原因。'
+    successMessage.value = ''
+    return
+  }
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
+  const previousBatchIds = new Set(batches.value.map((batch) => String(batch.id)))
+  const collegeId = selectedCollegeId.value
+  const academicYearId = Number(createForm.academicYearId)
+  const batchCode = createForm.batchCode.trim()
   try {
     const created = await selectionBatchService.create({
-      collegeId: selectedCollegeId.value, academicYearId: Number(createForm.academicYearId),
-      batchCode: createForm.batchCode.trim(), name: createForm.name.trim(),
+      collegeId, academicYearId,
+      batchCode, name: createForm.name.trim(),
       supplementPlanned: createForm.supplementPlanned, appendReason: createForm.appendReason.trim() || null,
     })
     selectedBatchId.value = created.batch.id
+    applyBatchDetail(created)
+    if (!batches.value.some((batch) => sameBatchId(batch.id, created.batch.id))) batches.value = [...batches.value, created.batch]
     createForm.batchCode = ''; createForm.name = ''; createForm.appendReason = ''; createForm.supplementPlanned = false
     await loadCollegeData()
     selectedBatchId.value = created.batch.id
     await loadSelectedBatch()
     successMessage.value = '批次草稿已创建。'
-  } catch (error) { errorMessage.value = friendlyError(error) }
+    await nextTick()
+    focusScheduleEditor()
+  } catch (error) {
+    const requestError = friendlyError(error)
+    // 创建响应可能在数据库提交后中断；用学院/学年/编号回读确认新记录，避免要求管理员刷新页面。
+    const definitiveClientError = error instanceof ApiError && error.status >= 400 && error.status < 500
+    if (!definitiveClientError) {
+      try {
+        if (collegeId !== null) {
+          const freshBatches = await selectionBatchService.batches(collegeId)
+          batches.value = freshBatches
+          const recovered = freshBatches.find((batch) => batch.academicYearId === academicYearId
+            && batch.batchCode === batchCode && !previousBatchIds.has(String(batch.id)))
+          if (recovered) {
+            selectedBatchId.value = recovered.id
+            await loadSelectedBatch()
+            successMessage.value = '批次草稿已创建。'
+            await nextTick()
+            focusScheduleEditor()
+            return
+          }
+        }
+      } catch {
+        // 列表回读也失败时保留创建请求的原始错误。
+      }
+    }
+    errorMessage.value = requestError
+  }
   finally { saving.value = false }
 }
 
@@ -232,9 +385,10 @@ async function saveMetadata(): Promise<void> {
   if (!selectedBatch.value) return
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
-    detail.value = await selectionBatchService.update(selectedBatch.value.id, selectedBatch.value.rowVersion, {
+    const updated = await selectionBatchService.update(selectedBatch.value.id, selectedBatch.value.rowVersion, {
       name: editForm.name.trim(), appendReason: editForm.appendReason.trim() || null,
     })
+    applyBatchDetail(updated)
     successMessage.value = '批次信息已保存。'
   } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
   finally { saving.value = false }
@@ -246,6 +400,13 @@ async function saveMetadata(): Promise<void> {
  */
 async function saveSchedule(): Promise<void> {
   if (!selectedBatch.value) return
+  const batchId = selectedBatch.value.id
+  const reason = editForm.scheduleReason.trim()
+  if (selectedBatch.value.status !== 'DRAFT' && !reason) {
+    errorMessage.value = '调整已发布批次的时间必须填写原因。'
+    successMessage.value = ''
+    return
+  }
   if (hasScheduleErrors.value) {
     errorMessage.value = '请先修正阶段时间旁的提示，再保存排期。'
     successMessage.value = ''
@@ -263,43 +424,150 @@ async function saveSchedule(): Promise<void> {
   }))
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
-    detail.value = await selectionBatchService.saveSchedule(selectedBatch.value.id, selectedBatch.value.rowVersion, {
-      stages, reason: editForm.scheduleReason.trim() || '批次排期配置',
+    const updated = await selectionBatchService.saveSchedule(batchId, selectedBatch.value.rowVersion, {
+      stages, reason: reason || '批次排期配置',
     })
+    applyBatchDetail(updated)
     editForm.scheduleReason = ''
     successMessage.value = '阶段时间已保存。'
-  } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
+  } catch (error) {
+    const requestError = friendlyError(error)
+    // 保存响应可能在数据库提交后中断。只读取批次详情来核对结果，避免整页名额/统计请求
+    // 覆盖原错误，也避免失败时丢掉管理员刚填写的排期。
+    try {
+      const latest = await selectionBatchService.batch(batchId)
+      if (sameBatchId(selectedBatchId.value, batchId)) {
+        applyBatchDetail(latest)
+        const saved = stages.every((stage) => {
+          const current = latest.stages.find((item) => item.stageCode === stage.stageCode)
+          return current?.plannedStartAt && current.plannedEndAt
+            && Date.parse(current.plannedStartAt) === Date.parse(stage.plannedStartAt)
+            && Date.parse(current.plannedEndAt) === Date.parse(stage.plannedEndAt)
+        })
+        if (saved) {
+          editForm.scheduleReason = ''
+          errorMessage.value = ''
+          successMessage.value = '阶段时间已保存。'
+          return
+        }
+      }
+    } catch {
+      // 保留原请求的错误；网络中断时二次读取也可能暂时不可用。
+    }
+    errorMessage.value = requestError
+  }
   finally { saving.value = false }
 }
 
-/** 批次状态命令带幂等键；完成后重读目录、状态和阶段，界面始终以服务端结果为准。 */
-async function runLifecycle(action: 'publish' | 'start' | 'pause' | 'resume' | 'cancel' | 'archive' | 'unarchive'): Promise<void> {
-  if (!selectedBatch.value) return
-  if (action === 'publish' && (!scheduleComplete.value || hasScheduleErrors.value || !scheduleSaved.value)) {
-    errorMessage.value = '请先填写有效的未来排期并保存，再发布批次。'
-    successMessage.value = ''
-    return
+/** 生命周期命令先应用写响应，再回读目录/详情/名额/统计，兼容响应中断与页面缓存。 */
+async function runLifecycle(action: BatchLifecycleAction): Promise<void> {
+  if (lifecycleSaving.value) return
+  const lifecycleBatch = selectedBatch.value ?? selectedBatchOption.value
+  if (!lifecycleBatch) return
+  if (action === 'publish') {
+    if (!scheduleReady.value) {
+      errorMessage.value = '请先配置所有未来阶段时间并保存排期，再发布批次。'
+      successMessage.value = ''
+      await nextTick()
+      focusScheduleEditor()
+      return
+    }
+    if (!quotaReady.value) {
+      errorMessage.value = '请先为至少一位符合资格的导师设置名额，再发布批次。'
+      successMessage.value = ''
+      await nextTick()
+      focusQuotaEditor()
+      return
+    }
+    if (!majorsReady.value) {
+      errorMessage.value = '学院专业目录尚未加载成功或没有启用专业，无法发布批次。请检查目录后重试。'
+      successMessage.value = ''
+      return
+    }
   }
   const confirmations: Partial<Record<typeof action, string>> = {
-    cancel: '取消此批次后，未匹配学生将结案为未匹配，待处理申请会取消。已锁定关系会保留。确定继续吗？',
+    unpublish: '撤回后会释放该学院和学年的运行名额，批次回到草稿状态，可修改排期后再次发布。确定撤回吗？',
+    pause: '暂停后，学生和导师暂时不能办理；志愿、申请、已锁定关系和已占用名额都会保留。确定暂停吗？',
+    cancel: '取消后将停止本批次后续流程，撤销本批次全部已锁定关系并释放对应名额；待处理申请会取消。关系和操作历史保留。确定继续吗？',
     archive: '归档后批次进入只读历史状态。确定归档吗？',
     unarchive: '解除归档后批次回到已完成状态，供授权管理员进行审计纠错。确定继续吗？',
   }
   if (confirmations[action] && !window.confirm(confirmations[action])) return
-  saving.value = true; errorMessage.value = ''; successMessage.value = ''
+  lifecycleSaving.value = true; lifecycleAction.value = action
+  errorMessage.value = ''; successMessage.value = ''
+  const collegeId = selectedCollegeId.value
+  let operationError: unknown = null
+  let updatedDetail: BatchDetail | null = null
+  const expectedStatus: Record<BatchLifecycleAction, string> = {
+    publish: 'SCHEDULED', unpublish: 'DRAFT', start: 'ACTIVE', pause: 'PAUSED',
+    resume: 'ACTIVE', cancel: 'CANCELLED', archive: 'ARCHIVED', unarchive: 'COMPLETED',
+  }
+  const successMessages: Record<typeof action, string> = {
+    publish: '批次已发布。', unpublish: '发布已撤回，批次回到草稿状态。', start: '批次已启动。', pause: '批次已暂停；志愿、申请、关系和名额均已保留。', resume: '批次已恢复，后续阶段已顺延。',
+    cancel: '批次已取消，已锁定关系已撤销并释放导师名额；关系和操作历史已保留。', archive: '批次已归档。', unarchive: '批次已解除归档。',
+  }
   try {
-    if (action === 'publish') detail.value = await selectionBatchService.publish(selectedBatch.value.id)
-    else if (action === 'start') detail.value = await selectionBatchService.start(selectedBatch.value.id)
-    else detail.value = await selectionBatchService.lifecycle(selectedBatch.value.id, action)
-    const successMessages: Record<typeof action, string> = {
-      publish: '批次已发布。', start: '批次已启动。', pause: '批次已暂停。', resume: '批次已恢复，后续阶段已顺延。',
-      cancel: '批次已取消，历史记录已保留。', archive: '批次已归档。', unarchive: '批次已解除归档。',
+    try {
+      const updated = action === 'publish'
+        ? await selectionBatchService.publish(lifecycleBatch.id)
+        : action === 'unpublish'
+          ? await selectionBatchService.unpublish(lifecycleBatch.id)
+        : action === 'start'
+          ? await selectionBatchService.start(lifecycleBatch.id)
+          : await selectionBatchService.lifecycle(lifecycleBatch.id, action)
+      updatedDetail = updated
+      applyBatchDetail(updated)
+      successMessage.value = successMessages[action]
+    } catch (error) {
+      operationError = error
+      errorMessage.value = friendlyError(error)
     }
-    successMessage.value = successMessages[action]
-    await loadCollegeData()
-    await loadSelectedBatch()
-  } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
-  finally { saving.value = false }
+
+    // 任何生命周期状态变化后都读取最新目录与详情；启动/取消同时刷新冻结范围、名额和统计。
+    let refreshedSummary: BatchSummary | undefined
+    let refreshedDetail: BatchDetail | null = null
+    let refreshErrorMessage = ''
+    try {
+      if (collegeId !== null) {
+        const freshBatches = await selectionBatchService.batches(collegeId)
+        if (selectedCollegeId.value === collegeId) {
+          batches.value = freshBatches
+          refreshedSummary = freshBatches.find((batch) => sameBatchId(batch.id, lifecycleBatch.id))
+        }
+      }
+      if (sameBatchId(selectedBatchId.value, lifecycleBatch.id)) {
+        refreshedDetail = await loadSelectedBatch()
+        if (refreshedDetail && errorMessage.value) refreshErrorMessage = errorMessage.value
+        if (!refreshedDetail) refreshErrorMessage = errorMessage.value || '批次详情未能刷新'
+        if (!refreshedDetail && refreshedSummary && detail.value) {
+          detail.value = { ...detail.value, batch: refreshedSummary }
+        }
+      }
+    } catch (error) {
+      refreshErrorMessage = friendlyError(error)
+    }
+
+    const actualStatus = refreshedDetail?.batch.status ?? refreshedSummary?.status ?? updatedDetail?.batch.status
+    if (actualStatus === expectedStatus[action]) {
+      errorMessage.value = refreshErrorMessage
+        ? `批次状态已更新，但详情、名额或统计未能完整刷新：${refreshErrorMessage}`
+        : ''
+      successMessage.value = successMessages[action]
+      if (action === 'unpublish' && sameBatchId(selectedBatchId.value, lifecycleBatch.id)) {
+        await nextTick()
+        focusScheduleEditor()
+      }
+    } else if (operationError) {
+      errorMessage.value = friendlyError(operationError)
+      successMessage.value = ''
+    } else if (updatedDetail) {
+      successMessage.value = successMessages[action]
+      if (refreshErrorMessage) errorMessage.value = `批次操作已完成，但界面刷新失败：${refreshErrorMessage}`
+    }
+  } finally {
+    lifecycleSaving.value = false
+    lifecycleAction.value = null
+  }
 }
 
 /** 名额数先做即时整数检查；最终资格、If-Match 版本和已占用下限由后端权威校验。 */
@@ -310,24 +578,13 @@ async function saveQuota(row: TeacherQuota): Promise<void> {
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
     await selectionBatchService.setQuota(selectedBatch.value.id, row, limit)
-    quotas.value = await selectionBatchService.quotas(selectedBatch.value.id)
+    const [updatedQuotas, updatedStatistics] = await Promise.all([
+      selectionBatchService.quotas(selectedBatch.value.id),
+      selectionBatchService.statistics(selectedBatch.value.id),
+    ])
+    quotas.value = updatedQuotas
+    statistics.value = updatedStatistics
     successMessage.value = `${row.fullName} 的名额已保存。`
-  } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
-  finally { saving.value = false }
-}
-
-async function saveSupplementTeachers(): Promise<void> {
-  if (!selectedBatch.value) return
-  saving.value = true; errorMessage.value = ''; successMessage.value = ''
-  try {
-    supplementTeachers.value = await selectionBatchService.setSupplementTeachers(
-      selectedBatch.value.id, selectedBatch.value.rowVersion, supplementTeacherIds.value,
-      supplementReason.value.trim(),
-    )
-    detail.value = await selectionBatchService.batch(selectedBatch.value.id)
-    supplementTeacherIds.value = supplementTeachers.value.filter((teacher) => teacher.permitted).map((teacher) => teacher.teacherId)
-    supplementReason.value = ''
-    successMessage.value = '补选导师名单已更新；已提交申请仍由原导师处理。'
   } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
   finally { saving.value = false }
 }
@@ -337,9 +594,10 @@ async function extendRound(): Promise<void> {
   if (!roundExtendReason.value.trim()) { errorMessage.value = '请填写延期原因。'; return }
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
-    detail.value = await selectionBatchService.extendRound(selectedBatch.value.id, roundExtendNo.value,
+    const updated = await selectionBatchService.extendRound(selectedBatch.value.id, roundExtendNo.value,
       selectedBatch.value.rowVersion, toUtc(roundNewEnd.value), roundExtendReason.value.trim())
-    statistics.value = await selectionBatchService.statistics(selectedBatch.value.id)
+    applyBatchDetail(updated)
+    statistics.value = await selectionBatchService.statistics(updated.batch.id)
     roundNewEnd.value = ''; roundExtendReason.value = ''
     successMessage.value = `第 ${roundExtendNo.value} 轮截止时间已延长，后续阶段已顺延。`
   } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
@@ -351,9 +609,10 @@ async function reopenRound(): Promise<void> {
   if (!roundReopenReason.value.trim()) { errorMessage.value = '请填写重开原因。'; return }
   saving.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
-    detail.value = await selectionBatchService.reopenRound(selectedBatch.value.id, roundReopenNo.value,
+    const updated = await selectionBatchService.reopenRound(selectedBatch.value.id, roundReopenNo.value,
       selectedBatch.value.rowVersion, toUtc(roundReopenEnd.value), roundReopenReason.value.trim())
-    statistics.value = await selectionBatchService.statistics(selectedBatch.value.id)
+    applyBatchDetail(updated)
+    statistics.value = await selectionBatchService.statistics(updated.batch.id)
     roundReopenEnd.value = ''; roundReopenReason.value = ''
     successMessage.value = `第 ${roundReopenNo.value} 轮已重新开放；系统自动结案申请已恢复，后续阶段按新截止时间顺延。`
   } catch (error) { errorMessage.value = friendlyError(error); await loadSelectedBatch() }
@@ -362,7 +621,10 @@ async function reopenRound(): Promise<void> {
 
 // 依赖变化时自动刷新对应层级，避免切换学院后沿用上一个学院的批次详情。
 watch(selectedCollegeId, loadCollegeData)
-watch(selectedBatchId, loadSelectedBatch)
+watch(selectedBatchId, () => {
+  scheduleEditorOpen.value = false
+  void loadSelectedBatch()
+})
 onMounted(loadColleges)
 </script>
 
@@ -397,28 +659,24 @@ onMounted(loadColleges)
       </label>
     </div>
 
-    <!-- 只有服务端目录标记为学院级授权时才显示新建表单；后端仍会再次拦截越权请求。 -->
-    <TeacherAllocationPanel v-if="props.canManagePersonnel && selectedBatch && selectedBatch.collegeId === selectedCollegeId"
-      :college-id="selectedBatch.collegeId" :college-name="selectedBatch.collegeName" :batch-id="selectedBatch.id"
-      :batch-name="selectedBatch.name" :academic-year-id="selectedBatch.academicYearId" :year-code="selectedBatch.yearCode"
-      :quotas="quotas" :editable="props.canManage && ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatch.status) && !loading && !saving"
-      @changed="refreshTeacherSetup" @access="hasTeacherDirectoryAccess = $event" />
-
-    <form v-if="canCreate" class="batch-create-form" @submit.prevent="createBatch">
-      <div class="batch-subheading"><span>新建草稿</span><small>学院和学年决定批次的业务范围</small></div>
-      <label>学年
-        <select v-model="createForm.academicYearId" required>
-          <option value="" disabled>选择学年</option>
-          <option v-for="year in years" :key="year.id" :value="String(year.id)">{{ year.displayName }}（{{ year.yearCode }}）</option>
-        </select>
-      </label>
-      <label>批次编号<input v-model="createForm.batchCode" maxlength="48" placeholder="例如 2026-01" required /></label>
-      <label>批次名称<input v-model="createForm.name" maxlength="128" placeholder="例如 2026 年秋季互选" required /></label>
-      <label class="batch-checkbox"><input v-model="createForm.supplementPlanned" type="checkbox" />安排独立补选窗口</label>
-      <label class="batch-reason">追加批次原因<textarea v-model="createForm.appendReason" rows="2" maxlength="4000" placeholder="同一学院和学年新增批次时必填" /></label>
-      <button class="secondary-button primary-secondary-button" type="submit" :disabled="saving || loading || !createForm.academicYearId">{{ saving ? '正在创建…' : '创建批次草稿' }}</button>
-    </form>
-    <p v-else-if="selectedCollege" class="batch-readonly-note">当前授权限定到已有批次，可配置所选批次；新建批次需要学院级批次管理授权。</p>
+    <div v-if="props.canManage && selectedBatchOption && ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatchOption.status)" class="batch-lifecycle-actions">
+      <div class="batch-lifecycle-copy">
+        <span>批次操作</span>
+        <strong>{{ selectedBatchOption.name }}</strong>
+        <span class="batch-status-pill" :class="'batch-status-' + selectedBatchOption.status.toLowerCase()">{{ statusNames[selectedBatchOption.status] ?? selectedBatchOption.status }}</span>
+        <small v-if="selectedBatchOption.status === 'DRAFT'">先配置并保存完整排期、导师名额，再发布；发布后需手动启动。</small>
+      </div>
+      <div class="batch-action-row">
+        <button v-if="selectedBatchOption.status === 'DRAFT'" class="secondary-button" type="button" :disabled="!sameBatchId(selectedBatch?.id, selectedBatchOption.id)" @click="focusScheduleEditor">配置排期与名额</button>
+        <button v-if="selectedBatchOption.status === 'DRAFT'" class="primary-button" type="button" :disabled="lifecycleSaving || !sameBatchId(selectedBatch?.id, selectedBatchOption.id)" @click="runLifecycle('publish')">{{ lifecycleSaving && lifecycleAction === 'publish' ? '正在发布…' : '发布批次' }}</button>
+        <button v-if="selectedBatchOption.status === 'SCHEDULED'" class="primary-button" type="button" :disabled="lifecycleSaving" @click="runLifecycle('start')">{{ lifecycleSaving && lifecycleAction === 'start' ? '正在启动…' : '启动批次' }}</button>
+        <button v-if="selectedBatchOption.status === 'SCHEDULED'" class="secondary-button" type="button" :disabled="lifecycleSaving" @click="runLifecycle('unpublish')">{{ lifecycleSaving && lifecycleAction === 'unpublish' ? '正在撤回…' : '撤回发布' }}</button>
+        <button v-if="props.canManage && selectedBatchOption && ['SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatchOption.status)" class="secondary-button" type="button" :disabled="saving || scheduleEditorOpening" @click="toggleScheduleEditor">{{ scheduleEditorOpening ? '正在载入排期…' : scheduleEditorOpen ? '收起时间调整' : '调整批次时间' }}</button>
+        <button v-if="selectedBatchOption.status === 'ACTIVE'" class="secondary-button" type="button" :disabled="lifecycleSaving" @click="runLifecycle('pause')">{{ lifecycleSaving && lifecycleAction === 'pause' ? '正在暂停…' : '暂停批次' }}</button>
+        <button v-if="selectedBatchOption.status === 'PAUSED'" class="primary-button" type="button" :disabled="lifecycleSaving" @click="runLifecycle('resume')">{{ lifecycleSaving && lifecycleAction === 'resume' ? '正在恢复…' : '恢复批次' }}</button>
+        <button v-if="['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatchOption.status)" class="text-button" type="button" :disabled="lifecycleSaving" @click="runLifecycle('cancel')">{{ lifecycleSaving && lifecycleAction === 'cancel' ? '正在取消…' : '取消批次' }}</button>
+      </div>
+    </div>
 
     <template v-if="selectedBatch">
       <div class="batch-selected-summary">
@@ -439,49 +697,35 @@ onMounted(loadColleges)
       </form>
 
       <!-- 发布前必须配置完整阶段；发布后服务端仅允许规则限定的时间调整。 -->
-      <form class="batch-schedule-form" @submit.prevent="saveSchedule">
-        <div class="batch-subheading"><span>阶段时间</span><small>按填报、第一轮、第二轮、第三轮及补选的顺序设置</small></div>
+      <form v-if="!props.canManage || !['SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatch.status) || scheduleEditorOpen" ref="scheduleEditor" class="batch-schedule-form" @submit.prevent="saveSchedule">
+        <div class="batch-subheading"><span>{{ ['ACTIVE', 'PAUSED'].includes(selectedBatch.status) ? '调整批次时间' : '阶段时间' }}</span><small>按填报、第一轮、第二轮、第三轮及补选的顺序设置</small></div>
         <p v-if="selectedBatch.status === 'DRAFT'" class="batch-time-help">请选择当前之后的时间；结束时间必须晚于开始时间。先保存有效排期，再发布批次。</p>
+        <p v-else-if="['ACTIVE', 'PAUSED'].includes(selectedBatch.status)" class="batch-time-help">可调整尚未开始阶段的时间。当前开放阶段的开始时间和已关闭阶段不可修改；运行中只能延长当前阶段，暂停时可将当前阶段结束时间调整到未来，恢复时仍按暂停时长整体顺延。修改后请填写原因。</p>
+        <p v-else-if="selectedBatch.status === 'SCHEDULED'" class="batch-time-help">批次尚未启动，可调整完整排期；修改后请填写原因。</p>
+        <div v-if="selectedBatch.status === 'DRAFT'" class="batch-publish-checklist" aria-label="发布前检查">
+          <strong>发布前检查</strong>
+          <span :class="{ 'batch-check-ready': scheduleReady }">{{ scheduleReady ? '✓' : '○' }} 完整排期已保存</span>
+          <span :class="{ 'batch-check-ready': quotaReady }">{{ quotaReady ? '✓' : '○' }} 至少一位有效导师已设置名额</span>
+          <span :class="{ 'batch-check-ready': majorsReady }">{{ majorsReady ? '✓' : '○' }} 学院专业目录可用</span>
+        </div>
         <div class="batch-schedule-head"><span>阶段</span><span>开始时间</span><span>结束时间</span></div>
         <div v-for="stage in visibleStages" :key="stage" class="batch-schedule-row">
           <strong>{{ stageNames[stage] }}</strong>
           <div class="batch-time-field">
-            <input v-model="schedule[stage].start" type="datetime-local" :min="minimumStageTime(stage, 'start')" :disabled="!isEditable || saving" :aria-label="`${stageNames[stage]}开始时间`" :aria-invalid="Boolean(scheduleErrors[stage]?.start)" :aria-describedby="scheduleErrors[stage]?.start ? `schedule-${stage}-start-error` : undefined" required />
+            <input v-model="schedule[stage].start" type="datetime-local" :min="minimumStageTime(stage, 'start')" :disabled="!canEditScheduleField(stage, 'start') || saving" :aria-label="`${stageNames[stage]}开始时间`" :aria-invalid="Boolean(scheduleErrors[stage]?.start)" :aria-describedby="scheduleErrors[stage]?.start ? `schedule-${stage}-start-error` : undefined" required />
             <small v-if="scheduleErrors[stage]?.start" :id="`schedule-${stage}-start-error`" class="batch-time-error" aria-live="polite">{{ scheduleErrors[stage].start }}</small>
           </div>
           <div class="batch-time-field">
-            <input v-model="schedule[stage].end" type="datetime-local" :min="minimumStageTime(stage, 'end')" :disabled="!isEditable || saving" :aria-label="`${stageNames[stage]}结束时间`" :aria-invalid="Boolean(scheduleErrors[stage]?.end)" :aria-describedby="scheduleErrors[stage]?.end ? `schedule-${stage}-end-error` : undefined" required />
+            <input v-model="schedule[stage].end" type="datetime-local" :min="minimumStageTime(stage, 'end')" :disabled="!canEditScheduleField(stage, 'end') || saving" :aria-label="`${stageNames[stage]}结束时间`" :aria-invalid="Boolean(scheduleErrors[stage]?.end)" :aria-describedby="scheduleErrors[stage]?.end ? `schedule-${stage}-end-error` : undefined" required />
             <small v-if="scheduleErrors[stage]?.end" :id="`schedule-${stage}-end-error`" class="batch-time-error" aria-live="polite">{{ scheduleErrors[stage].end }}</small>
           </div>
         </div>
-        <label v-if="isEditable" class="batch-reason">排期变更原因<textarea v-model="editForm.scheduleReason" rows="2" maxlength="4000" placeholder="初次配置可留空；调整已发布排期时请说明原因" /></label>
+        <label v-if="isEditable" class="batch-reason">排期变更原因<textarea v-model="editForm.scheduleReason" rows="2" maxlength="4000" :required="selectedBatch.status !== 'DRAFT'" :placeholder="selectedBatch.status === 'DRAFT' ? '初次配置可留空' : '请说明调整排期的原因'" /></label>
         <div class="batch-action-row">
-          <button v-if="isEditable" class="secondary-button" type="submit" :disabled="saving || hasScheduleErrors">保存完整排期</button>
-          <button v-if="canPublish" class="primary-button batch-action-primary" type="button" :disabled="saving || !scheduleComplete || hasScheduleErrors || !scheduleSaved" @click="runLifecycle('publish')">发布批次 <span aria-hidden="true">→</span></button>
-          <button v-if="canStart" class="primary-button batch-action-primary" type="button" :disabled="saving" @click="runLifecycle('start')">启动批次 <span aria-hidden="true">→</span></button>
-          <button v-if="props.canManage && selectedBatch.status === 'ACTIVE'" class="secondary-button" type="button" :disabled="saving" @click="runLifecycle('pause')">暂停批次</button>
-          <button v-if="props.canManage && selectedBatch.status === 'PAUSED'" class="primary-button" type="button" :disabled="saving" @click="runLifecycle('resume')">恢复批次</button>
-          <button v-if="props.canManage && ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED'].includes(selectedBatch.status)" class="text-button" type="button" :disabled="saving" @click="runLifecycle('cancel')">取消批次</button>
+          <button v-if="isEditable" class="secondary-button" type="submit" :disabled="saving || hasScheduleErrors || selectedBatch.status !== 'DRAFT' && !editForm.scheduleReason.trim()">{{ ['ACTIVE', 'PAUSED'].includes(selectedBatch.status) ? '保存时间调整' : '保存完整排期' }}</button>
           <button v-if="props.canManage && selectedBatch.status === 'COMPLETED'" class="secondary-button" type="button" :disabled="saving" @click="runLifecycle('archive')">归档批次</button>
           <button v-if="props.canManage && selectedBatch.status === 'ARCHIVED'" class="secondary-button" type="button" :disabled="saving" @click="runLifecycle('unarchive')">解除归档</button>
         </div>
-      </form>
-
-      <form v-if="props.canManage && selectedBatch.supplementPlanned" class="batch-quota-section supplement-teacher-section" @submit.prevent="saveSupplementTeachers">
-        <div class="batch-subheading"><span>补选导师名单</span><small>撤销许可只阻止新申请，已经提交的申请仍由原导师处理</small></div>
-        <div v-if="!hasSupplementSchedule" class="batch-empty">先配置并保存补选窗口排期，再设置参与导师。</div>
-        <template v-else>
-          <div v-if="!supplementTeachers.length" class="batch-empty">当前没有符合资格和公开资料要求的导师名额。</div>
-          <div v-else class="supplement-teacher-grid">
-            <label v-for="teacher in supplementTeachers" :key="teacher.teacherId" class="supplement-teacher-choice">
-              <input v-model="supplementTeacherIds" type="checkbox" :value="teacher.teacherId" :disabled="saving || selectedBatch.status === 'COMPLETED' || selectedBatch.status === 'ARCHIVED'" />
-              <span><strong>{{ teacher.fullName }}</strong><small>{{ teacher.employeeNo }} · 剩余名额 {{ teacher.remainingCount }}</small></span>
-              <em>{{ teacher.permitted ? '已授权' : '未授权' }}</em>
-            </label>
-          </div>
-          <label class="supplement-reason">名单调整原因<textarea v-model="supplementReason" rows="2" maxlength="4000" required /></label>
-          <button class="secondary-button" type="submit" :disabled="saving || !supplementReason.trim() || ['COMPLETED', 'ARCHIVED', 'CANCELLED'].includes(selectedBatch.status)">保存补选导师名单</button>
-        </template>
       </form>
 
       <form v-if="props.canManage && openRounds.length && ['ACTIVE', 'PAUSED'].includes(selectedBatch.status)" class="batch-quota-section round-extension-section" @submit.prevent="extendRound">
@@ -533,7 +777,7 @@ onMounted(loadColleges)
       </div>
 
       <!-- 名额表展示剩余量和导师范围状态；实际录取时仍由服务端在名额行锁下扣减。 -->
-      <div v-if="!props.canManagePersonnel || !hasTeacherDirectoryAccess" class="batch-quota-section">
+      <div ref="quotaEditor" class="batch-quota-section">
         <div class="batch-subheading"><span>导师名额</span><small>只列出本学年资格有效、账号启用且公开资料已发布的导师</small></div>
         <div v-if="!quotas.length" class="batch-empty">当前批次没有符合条件的导师记录。</div>
         <div v-else class="batch-quota-table-wrap">
@@ -546,14 +790,32 @@ onMounted(loadColleges)
                 <td><input v-model="quotaDrafts[row.teacherId]" class="quota-input" type="number" min="0" step="1" :disabled="!isEditable || saving" :aria-label="`${row.fullName} 名额上限`" /></td>
                 <td>{{ row.occupiedCount }}</td><td class="quota-remaining">{{ row.remainingCount }}</td>
                 <td><span>{{ row.scopeFrozen ? '已冻结' : row.scopeConfigured ? '已配置' : '默认全选' }}</span></td>
-                <td><button class="text-button" type="button" :disabled="!isEditable || saving" @click="saveQuota(row)">保存名额</button></td>
+                <td><button class="quota-save-button" type="button" :disabled="!isEditable || saving" @click="saveQuota(row)">保存名额</button></td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
     </template>
-    <div v-else-if="!loading && batches.length === 0" class="batch-empty batch-empty-large">
+
+    <!-- 新建入口放在所选批次的配置之后，避免把草稿的排期和发布操作挤出首屏。 -->
+    <form v-if="canCreate" class="batch-create-form" @submit.prevent="createBatch">
+      <div class="batch-subheading"><span>新建草稿</span><small>学院和学年决定批次的业务范围</small></div>
+      <label>学年
+        <select v-model="createForm.academicYearId" required>
+          <option value="" disabled>选择学年</option>
+          <option v-for="year in years" :key="year.id" :value="String(year.id)">{{ year.displayName }}（{{ year.yearCode }}）</option>
+        </select>
+      </label>
+      <label>批次编号<input v-model="createForm.batchCode" maxlength="48" placeholder="例如 2026-01" required /></label>
+      <label>批次名称<input v-model="createForm.name" maxlength="128" placeholder="例如 2026 年秋季互选" required /></label>
+      <label class="batch-checkbox"><input v-model="createForm.supplementPlanned" type="checkbox" />安排独立补选窗口</label>
+      <label class="batch-reason">追加批次原因{{ appendReasonRequired ? '（同学院同学年已有批次，必填）' : '' }}<textarea v-model="createForm.appendReason" rows="2" maxlength="4000" :required="appendReasonRequired" :placeholder="appendReasonRequired ? '请说明本次追加批次的原因' : '首次创建时可留空'" /></label>
+      <button class="secondary-button primary-secondary-button" type="submit" :disabled="saving || directoryLoading || !createForm.academicYearId">{{ saving ? '正在创建…' : directoryLoading ? '正在加载学院数据…' : '创建批次草稿' }}</button>
+    </form>
+    <p v-if="!canCreate && selectedCollege" class="batch-readonly-note">当前授权限定到已有批次，可配置所选批次；新建批次需要学院级批次管理授权。</p>
+
+    <div v-if="!loading && batches.length === 0" class="batch-empty batch-empty-large">
       <strong>{{ canCreate ? '还没有互选批次' : '当前授权范围内没有批次' }}</strong><span>{{ canCreate ? '先创建草稿，再配置完整排期与导师名额。' : '请联系总管理员确认批次管理范围。' }}</span>
     </div>
   </section>
@@ -567,6 +829,11 @@ onMounted(loadColleges)
 .batch-eyebrow { margin: 0; color: #54708b; font-size: .7rem; font-weight: 700; letter-spacing: .16em; }
 .batch-panel-stamp,.batch-status-pill { border: 1px solid #cdd9e4; border-radius: 999px; padding: 7px 12px; color: #49637b; background: #f5f8fa; font-size: .75rem; font-weight: 700; white-space: nowrap; }
 .batch-toolbar { display: grid; grid-template-columns: minmax(210px, .8fr) minmax(260px, 1.2fr); gap: 16px; margin: 22px 0; }
+.batch-lifecycle-actions { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: -7px 0 18px; padding: 12px 14px; border: 1px solid #dce4eb; border-radius: 8px; background: #fbfcfd; }
+.batch-lifecycle-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #64788a; font-size: .8rem; }
+.batch-lifecycle-copy strong { color: #24394f; }
+.batch-lifecycle-copy small { flex-basis: 100%; color: #64788a; line-height: 1.5; }
+.batch-lifecycle-actions .batch-action-row { margin-top: 0; }
 .batch-toolbar label,.batch-create-form label,.batch-inline-form label,.batch-schedule-form label { display: grid; gap: 7px; color: #53687d; font-size: .82rem; font-weight: 650; }
 .batch-toolbar select,.batch-create-form input:not([type=checkbox]),.batch-create-form select,.batch-create-form textarea,.batch-inline-form input,.batch-inline-form textarea,.batch-schedule-form input,.batch-schedule-form textarea { width: 100%; min-height: 42px; border: 1px solid #cbd6df; border-radius: 7px; padding: 9px 11px; background: #fff; color: #20364d; font: inherit; }
 .batch-create-form,.batch-schedule-form,.batch-quota-section { margin-top: 22px; padding: 19px; border: 1px solid #dce4eb; border-radius: 10px; background: #fbfcfd; }
@@ -615,6 +882,9 @@ onMounted(loadColleges)
 .batch-time-field input[aria-invalid="true"] { border-color: #c94343; }
 .batch-time-error { color: #b93636; font-size: .75rem; line-height: 1.5; }
 .batch-time-help { color: #62778b; font-size: .8rem; line-height: 1.6; margin: 8px 10px; }
+.batch-publish-checklist { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 12px 10px 16px; padding: 11px 13px; border: 1px solid #dce4eb; border-radius: 7px; background: #fff; color: #687b8e; font-size: .78rem; }
+.batch-publish-checklist strong { color: #304b63; }
+.batch-publish-checklist .batch-check-ready { color: #34715e; }
 .batch-schedule-form>.batch-reason { margin-top: 13px; }
 .batch-action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .batch-action-primary { margin-left: auto; }
@@ -641,6 +911,9 @@ onMounted(loadColleges)
 .quota-input { width: 86px; min-height: 34px; border: 1px solid #cbd6df; border-radius: 6px; padding: 5px 8px; color: #20364d; font: inherit; }
 .quota-eligible { color: #387260; }
 .quota-remaining { color: #2b5674 !important; font-weight: 750; }
+.quota-save-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; padding: 0 14px; border: 1px solid var(--hnust-blue-dark); border-radius: 8px; background: var(--hnust-blue-dark); color: #fff; font: inherit; font-size: .75rem; font-weight: 650; cursor: pointer; transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
+.quota-save-button:hover:not(:disabled) { border-color: #066c98; background: #066c98; }
+.quota-save-button:disabled { cursor: not-allowed; opacity: .55; }
 .batch-empty { padding: 19px; color: #738396; background: #f7f9fa; font-size: .84rem; }
 .batch-empty-large { display: grid; gap: 5px; margin-top: 14px; padding: 32px; text-align: center; }
 .batch-empty-large strong { color: #304b63; }
@@ -655,6 +928,7 @@ onMounted(loadColleges)
   .batch-schedule-row strong { grid-column: 1/-1; }
   .batch-inline-form { grid-template-columns: 1fr; }
 }
+@media(max-width: 760px) { .batch-lifecycle-actions { align-items: flex-start; flex-direction: column; } }
 @media(max-width: 520px) {
   .batch-toolbar,.batch-create-form { grid-template-columns: 1fr; }
   .batch-panel-heading,.batch-subheading { align-items: flex-start; flex-direction: column; }
@@ -662,4 +936,3 @@ onMounted(loadColleges)
   .batch-schedule-row { grid-template-columns: 1fr; }
 }
 </style>
-

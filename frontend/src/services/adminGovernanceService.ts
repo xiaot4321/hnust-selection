@@ -10,9 +10,14 @@ export interface IdentityCorrection {
 }
 export interface TeacherProfileReview {
   versionId: number; teacherId: number; employeeNo: string; fullName: string; collegeId: number; collegeName: string
-  versionNo: number; reviewStatus: string; researchDirections: string; biography: string; submittedAt: string
+  versionNo: number; reviewStatus: string; researchDirections: string; biography: string
+  educationExperience: string | null; workExperience: string | null; courses: string | null; researchAndAchievements: string | null
+  submittedAt: string
   currentPublishedVersionNo: number | null; currentPublishedResearchDirections: string | null
-  currentPublishedBiography: string | null; etag: string
+  currentPublishedBiography: string | null; currentPublishedEducationExperience: string | null
+  currentPublishedWorkExperience: string | null; currentPublishedCourses: string | null
+  currentPublishedResearchAndAchievements: string | null; avatarUrl: string | null
+  currentPublishedAvatarUrl: string | null; etag: string
 }
 export interface MatchingRelation {
   relationId: number; batchId: number; studentId: number; studentNo: string; studentName: string; majorName: string

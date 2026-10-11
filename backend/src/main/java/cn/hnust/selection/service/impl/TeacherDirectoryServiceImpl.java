@@ -8,6 +8,7 @@ import cn.hnust.selection.repository.TeacherDirectoryRepository.DirectoryContext
 import cn.hnust.selection.repository.TeacherDirectoryRepository.TeacherRow;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.TeacherDirectoryService;
+import cn.hnust.selection.service.PrivateFileStorage;
 import cn.hnust.selection.vo.AllowedMajorVO;
 import cn.hnust.selection.vo.TeacherDirectoryDetailVO;
 import cn.hnust.selection.vo.TeacherDirectoryItemVO;
@@ -16,6 +17,8 @@ import cn.hnust.selection.entity.TeacherOfficialProfileCacheEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.io.IOException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,11 +31,13 @@ import java.util.Optional;
 public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
     private final TeacherDirectoryRepository repository;
     private final OfficialFacultyProfileLookupService officialProfileLookup;
+    private final PrivateFileStorage fileStorage;
 
     public TeacherDirectoryServiceImpl(TeacherDirectoryRepository repository,
-        OfficialFacultyProfileLookupService officialProfileLookup) {
+        OfficialFacultyProfileLookupService officialProfileLookup, PrivateFileStorage fileStorage) {
         this.repository = repository;
         this.officialProfileLookup = officialProfileLookup;
+        this.fileStorage = fileStorage;
     }
 
     @Override
@@ -117,6 +122,12 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         result.setAllowedMajors(allowedMajors == null ? Collections.<AllowedMajorVO>emptyList() : allowedMajors);
         result.setCanApply(row.isCanApply());
         result.setOfficialProfile(official);
+        if (row.getAvatarStorageKey() != null) {
+            try { result.setAvatarUrl(fileStorage.temporaryReadUrl(row.getAvatarStorageKey())); }
+            catch (IOException ex) {
+                throw new ApiException("INTERNAL_ERROR", "暂时无法读取导师头像", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        }
         return result;
     }
 
@@ -130,6 +141,7 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         target.setAllowedMajors(source.getAllowedMajors());
         target.setCanApply(source.isCanApply());
         target.setOfficialProfile(source.getOfficialProfile());
+        target.setAvatarUrl(source.getAvatarUrl());
     }
 
     private List<String> splitDirections(String value) {

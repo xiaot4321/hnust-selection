@@ -7,10 +7,20 @@ export interface TeacherProfile {
   fullName: string
   publishedResearchDirections: string | null
   publishedBiography: string | null
+  publishedEducationExperience: string | null
+  publishedWorkExperience: string | null
+  publishedCourses: string | null
+  publishedResearchAndAchievements: string | null
   reviewStatus: string | null
   reviewComment: string | null
   submittedResearchDirections: string | null
   submittedBiography: string | null
+  submittedEducationExperience: string | null
+  submittedWorkExperience: string | null
+  submittedCourses: string | null
+  submittedResearchAndAchievements: string | null
+  publishedAvatarUrl: string | null
+  submittedAvatarUrl: string | null
   versionNo: number
   etag: string
 }
@@ -119,9 +129,16 @@ async function mutate<T>(signature: string, path: string, body: unknown, headers
 
 export const teacherWorkspaceService = {
   profile(): Promise<TeacherProfile> { return request('/teachers/me/profile') },
-  saveProfile(profile: TeacherProfile, payload: { researchDirections: string; biography: string }): Promise<TeacherProfile> {
+  saveProfile(profile: TeacherProfile, payload: {
+    researchDirections: string; biography: string; educationExperience: string; workExperience: string
+    courses: string; researchAndAchievements: string
+  }, avatar: File | null, clearAvatar: boolean): Promise<TeacherProfile> {
+    const body = new FormData()
+    body.append('profile', new Blob([JSON.stringify(payload)], { type: 'application/json' }))
+    if (avatar) body.append('avatar', avatar)
+    if (clearAvatar) body.append('clearAvatar', 'true')
     return request('/teachers/me/profile', {
-      method: 'PATCH', headers: { 'If-Match': profile.etag }, body: JSON.stringify(payload),
+      method: 'PATCH', headers: { 'If-Match': profile.etag }, body,
     })
   },
   rounds(batchId: number, roundNo: number): Promise<PageResult<TeacherApplication>> {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import EmailSecurityPanel from '../auth/EmailSecurityPanel.vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
 import TeacherApplicationScopePanel from './TeacherApplicationScopePanel.vue'
 import { selectionBatchService, type TeacherScopeBatch } from '../../services/selectionBatchService'
@@ -29,6 +29,13 @@ const selectedRoundIds = ref<number[]>([])
 const selectedSupplementIds = ref<number[]>([])
 const directions = ref('')
 const biography = ref('')
+const educationExperience = ref('')
+const workExperience = ref('')
+const courses = ref('')
+const researchAndAchievements = ref('')
+const selectedAvatar = ref<File | null>(null)
+const avatarPreviewUrl = ref('')
+const clearAvatar = ref(false)
 const messageTitle = ref('互选申请沟通')
 const messageContent = ref('')
 const selectedNoticeRefs = ref<string[]>([])
@@ -47,6 +54,10 @@ const allNoticeCandidates = computed(() => [
 const reviewLabel = computed(() => ({
   DRAFT: '待完善', PENDING_REVIEW: '待管理员审核', APPROVED: '已审核', PUBLISHED: '已公开', REJECTED: '需修改',
 }[profile.value?.reviewStatus ?? 'DRAFT'] ?? (profile.value?.reviewStatus || '尚未提交')))
+const profileAvatarUrl = computed(() => profile.value?.reviewStatus === 'PENDING_REVIEW'
+  ? profile.value.submittedAvatarUrl ?? ''
+  : profile.value?.publishedAvatarUrl ?? profile.value?.submittedAvatarUrl ?? '')
+const avatarDisplayUrl = computed(() => avatarPreviewUrl.value || (clearAvatar.value ? '' : profileAvatarUrl.value))
 
 function messageFor(error: unknown): string {
   if (error instanceof ApiError) return error.message
@@ -58,6 +69,30 @@ function formatTime(value: string | null | undefined): string {
 }
 function degreeLabel(value: string): string { return value === 'ACADEMIC_MASTER' ? '学硕' : value === 'PROFESSIONAL_MASTER' ? '专硕' : value }
 function statusLabel(value: string): string { return value === 'IN_REVIEW' ? '待处理' : value === 'ADMITTED' ? '已录取' : value === 'NOT_ADMITTED' || value === 'REJECTED' ? '未录取' : value }
+
+function discardAvatarPreview(): void {
+  if (avatarPreviewUrl.value) URL.revokeObjectURL(avatarPreviewUrl.value)
+  avatarPreviewUrl.value = ''
+}
+function selectAvatar(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) { errorMessage.value = '头像不能超过 5 MB。'; return }
+  if (!/\.(jpe?g|png)$/i.test(file.name)) { errorMessage.value = '头像只接受 JPG 或 PNG 图片。'; return }
+  discardAvatarPreview()
+  selectedAvatar.value = file
+  clearAvatar.value = false
+  avatarPreviewUrl.value = URL.createObjectURL(file)
+  errorMessage.value = ''
+}
+function removeAvatar(): void {
+  discardAvatarPreview()
+  selectedAvatar.value = null
+  clearAvatar.value = true
+}
+onBeforeUnmount(discardAvatarPreview)
 
 async function loadBatches(): Promise<void> {
   loading.value = true
@@ -73,6 +108,10 @@ async function loadProfile(): Promise<void> {
     profile.value = await teacherWorkspaceService.profile()
     directions.value = profile.value.submittedResearchDirections ?? profile.value.publishedResearchDirections ?? ''
     biography.value = profile.value.submittedBiography ?? profile.value.publishedBiography ?? ''
+    educationExperience.value = profile.value.submittedEducationExperience ?? profile.value.publishedEducationExperience ?? ''
+    workExperience.value = profile.value.submittedWorkExperience ?? profile.value.publishedWorkExperience ?? ''
+    courses.value = profile.value.submittedCourses ?? profile.value.publishedCourses ?? ''
+    researchAndAchievements.value = profile.value.submittedResearchAndAchievements ?? profile.value.publishedResearchAndAchievements ?? ''
   } catch (error) { errorMessage.value = messageFor(error) }
 }
 async function loadSummary(): Promise<void> {
@@ -192,20 +231,34 @@ async function decideSelectedSupplements(decision: 'ADMIT' | 'NOT_ADMITTED'): Pr
 }
 async function saveProfile(): Promise<void> {
   if (!profile.value || savingProfile.value) return
-  if (profile.value.reviewStatus === 'PENDING_REVIEW') {
-    window.alert('你已经提交审核，无需再次提交。')
-    return
-  }
+  const wasPending = profile.value.reviewStatus === 'PENDING_REVIEW'
+  const previousEtag = profile.value.etag
   savingProfile.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
-    profile.value = await teacherWorkspaceService.saveProfile(profile.value, { researchDirections: directions.value, biography: biography.value })
+    profile.value = await teacherWorkspaceService.saveProfile(profile.value, {
+      researchDirections: directions.value,
+      biography: biography.value,
+      educationExperience: educationExperience.value,
+      workExperience: workExperience.value,
+      courses: courses.value,
+      researchAndAchievements: researchAndAchievements.value,
+    }, selectedAvatar.value, clearAvatar.value)
+    discardAvatarPreview()
+    selectedAvatar.value = null
+    clearAvatar.value = false
     directions.value = profile.value.submittedResearchDirections ?? ''
     biography.value = profile.value.submittedBiography ?? ''
-    successMessage.value = '资料已提交管理员审核；审核通过后会显示在学生导师目录。'
+    educationExperience.value = profile.value.submittedEducationExperience ?? ''
+    workExperience.value = profile.value.submittedWorkExperience ?? ''
+    courses.value = profile.value.submittedCourses ?? ''
+    researchAndAchievements.value = profile.value.submittedResearchAndAchievements ?? ''
+    successMessage.value = wasPending && profile.value.etag === previousEtag
+      ? '资料内容没有变化，仍在管理员审核中。'
+      : wasPending
+        ? '待审核资料已更新；管理员审核时将看到最新内容，当前公开版本继续展示。'
+      : '资料已提交管理员审核；审核通过后会显示在学生导师目录。'
   } catch (error) {
-    if (error instanceof ApiError && error.code === 'PROFILE_ALREADY_SUBMITTED') {
-      window.alert('你已经提交审核，无需再次提交。')
-    } else { errorMessage.value = messageFor(error) }
+    errorMessage.value = messageFor(error)
     await loadProfile()
   }
   finally { savingProfile.value = false }
@@ -247,13 +300,8 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
 
 <template>
   <div class="teacher-workspace">
-    <EmailSecurityPanel />
     <header class="teacher-dashboard-header">
-      <div>
-        <p class="teacher-eyebrow">TEACHER WORKSPACE</p>
-        <h2>导师工作台</h2>
-        <p>查看本轮申请，逐项决定录取结果，并跟进本人批次的招生情况。</p>
-      </div>
+      <h2>导师工作台</h2>
       <label v-if="batches.length" class="teacher-batch-picker">当前批次
         <select v-model.number="selectedBatchId" :disabled="loading">
           <option v-for="batch in batches" :key="batch.batchId" :value="batch.batchId">{{ batch.academicYearCode }} · {{ batch.name }}</option>
@@ -270,7 +318,7 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
 
     <section v-if="section === 'applications'" class="teacher-panel" aria-labelledby="round-applications-heading">
       <div class="teacher-panel-heading">
-        <div><span class="teacher-kicker">CURRENT ROUND</span><h3 id="round-applications-heading">常规轮次申请</h3>
+        <div><h3 id="round-applications-heading">常规轮次申请</h3>
           <p>每轮只处理对应顺位投向本人的申请；导师决定不排序，录取成功后立即锁定关系。</p></div>
         <div class="round-selector" aria-label="选择轮次">
           <button v-for="number in [1, 2, 3]" :key="number" type="button" :class="{ active: roundNo === number }" @click="roundNo = number">第 {{ number }} 轮</button>
@@ -298,7 +346,7 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
       <div v-if="selectedRoundIds.length" class="teacher-bulk-actions"><span>已选择 {{ selectedRoundIds.length }} 项</span><button class="teacher-admit-button" type="button" :disabled="bulkBusy" @click="decideSelectedRound('ADMIT')">{{ bulkBusy ? '处理中…' : '批量录取所选' }}</button><button class="teacher-reject-button" type="button" :disabled="bulkBusy" @click="decideSelectedRound('NOT_ADMITTED')">批量不录取</button></div>
       <div v-else-if="!applications.length" class="teacher-empty"><strong>{{ loading ? '正在读取申请…' : '当前轮暂时没有申请' }}</strong><span>填报阶段不会显示志愿；轮次开启后，只有投向本人的对应顺位申请会出现在这里。</span></div>
       <div v-if="allNoticeCandidates.length" class="teacher-message-box">
-        <div><span class="teacher-kicker">MESSAGE APPLICANTS</span><h3>联系申请学生</h3><p>收件人由所选申请自动确定，不能填写其他学生或账号。</p></div>
+        <div><h3>联系申请学生</h3><p>收件人由所选申请自动确定，不能填写其他学生或账号。</p></div>
         <fieldset class="teacher-message-recipients"><legend>收件学生</legend>
           <label v-for="candidate in allNoticeCandidates" :key="candidate.key"><input type="checkbox" :checked="selectedNoticeRefs.includes(candidate.key)" @change="toggleNotice(candidate.key)" />{{ candidate.name }}（{{ candidate.no }}）</label>
         </fieldset>
@@ -309,7 +357,7 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
     </section>
 
     <section v-else-if="section === 'supplement'" class="teacher-panel" aria-labelledby="supplement-heading">
-      <div class="teacher-panel-heading"><div><span class="teacher-kicker">SUPPLEMENT</span><h3 id="supplement-heading">补选申请</h3><p>只处理管理员开放窗口并授权给本人的补选申请。录取时再次核验学生状态、冻结范围和剩余名额。</p></div></div>
+      <div class="teacher-panel-heading"><div><h3 id="supplement-heading">补选申请</h3><p>只处理管理员开放窗口并授权给本人的补选申请。录取时再次核验学生状态、冻结范围和剩余名额。</p></div></div>
       <div v-if="supplements.length" class="teacher-application-list">
         <article v-for="item in supplements" :key="item.applicationId" class="teacher-application-card" :class="{ selectable: item.status === 'IN_REVIEW' }">
           <label v-if="item.status === 'IN_REVIEW'" class="teacher-select-application" :aria-label="`选择 ${item.fullName}`"><input type="checkbox" :checked="selectedSupplementIds.includes(item.applicationId)" :disabled="bulkBusy" @change="toggleSelected(selectedSupplementIds, item.applicationId, (next) => selectedSupplementIds = next)" /></label>
@@ -325,24 +373,32 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
     </section>
 
     <section v-else-if="section === 'results'" class="teacher-panel" aria-labelledby="teacher-results-heading">
-      <div class="teacher-panel-heading"><div><span class="teacher-kicker">MY MATCHES</span><h3 id="teacher-results-heading">已录取学生与名额</h3><p>名额在常规轮次与补选中累计使用；导师不能调整名额或自行撤销锁定关系。</p></div></div>
+      <div class="teacher-panel-heading"><div><h3 id="teacher-results-heading">已录取学生与名额</h3><p>名额在常规轮次与补选中累计使用；导师不能调整名额或自行撤销锁定关系。</p></div></div>
       <div v-if="summary" class="teacher-quota-cards"><div><small>名额上限</small><strong>{{ summary.quotaLimit }}</strong></div><div><small>已锁定关系</small><strong>{{ summary.occupiedCount }}</strong></div><div><small>剩余名额</small><strong>{{ summary.remainingCount }}</strong></div><div><small>批次阶段</small><strong>{{ summary.currentStage || summary.batchStatus }}</strong></div></div>
       <div v-if="summary?.matchedStudents.length" class="teacher-results-table-wrap"><table class="teacher-results-table"><thead><tr><th>学生</th><th>学号</th><th>专业 / 类型</th><th>录取来源</th><th>锁定时间</th></tr></thead><tbody><tr v-for="student in summary.matchedStudents" :key="student.relationId"><td>{{ student.fullName }}</td><td>{{ student.studentNo }}</td><td>{{ student.majorName }} · {{ degreeLabel(student.degreeType) }}</td><td>{{ student.source }}</td><td>{{ formatTime(student.lockedAt) }}</td></tr></tbody></table></div>
       <div v-else class="teacher-empty">当前批次还没有锁定的师生关系。</div>
     </section>
 
     <section v-else-if="section === 'profile'" class="teacher-panel" aria-labelledby="teacher-profile-heading">
-      <div class="teacher-panel-heading"><div><span class="teacher-kicker">PUBLIC PROFILE</span><h3 id="teacher-profile-heading">维护公开资料</h3><p>学生目录展示经管理员审核通过的版本；编辑内容提交后进入审核流程。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
-      <div v-if="profile" class="teacher-profile-form"><div class="teacher-profile-identity"><span class="teacher-profile-avatar">{{ profile.fullName.slice(0, 1) }}</span><div><strong>{{ profile.fullName }}</strong><span>{{ profile.employeeNo }}</span></div></div>
+      <div class="teacher-panel-heading"><div><h3 id="teacher-profile-heading">维护公开资料</h3><p>学生目录展示经管理员审核通过的版本；编辑内容提交后进入审核流程。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
+      <div v-if="profile" class="teacher-profile-form"><div class="teacher-profile-identity"><span class="teacher-profile-avatar"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></span><div><strong>{{ profile.fullName }}</strong><span>{{ profile.employeeNo }}</span></div></div>
+        <div class="teacher-avatar-editor"><div class="teacher-avatar-preview"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像预览'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></div><div><strong>公开头像</strong><p>上传 JPG 或 PNG，最大 5 MB。提交后与公开资料一起审核，通过后显示在学生导师目录。</p><label class="teacher-avatar-picker">{{ selectedAvatar ? '更换图片' : '选择图片' }}<input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" @change="selectAvatar" /></label><button v-if="avatarDisplayUrl || profile.submittedAvatarUrl || profile.publishedAvatarUrl" class="teacher-avatar-remove" type="button" @click="removeAvatar">移除头像</button></div></div>
         <label>研究方向<textarea v-model="directions" rows="3" maxlength="2000" placeholder="介绍主要研究领域与方向"></textarea></label>
         <label>个人简介<textarea v-model="biography" rows="6" maxlength="10000" placeholder="介绍指导风格、研究团队与相关信息"></textarea></label>
-        <p v-if="profile.publishedResearchDirections || profile.publishedBiography" class="teacher-published-note">当前已公开版本仍保持展示，直到新版本审核通过。</p>
+        <label>学习经历<textarea v-model="educationExperience" rows="4" maxlength="10000" placeholder="按时间填写毕业院校、专业、学位等经历"></textarea></label>
+        <label>工作经历<textarea v-model="workExperience" rows="4" maxlength="10000" placeholder="按时间填写任职单位、岗位或职务"></textarea></label>
+        <label>承担课程<textarea v-model="courses" rows="3" maxlength="10000" placeholder="填写承担的本科生或研究生课程"></textarea></label>
+        <label>科研与成果<textarea v-model="researchAndAchievements" rows="8" maxlength="10000" placeholder="可分行填写科研项目、论文成果、奖励荣誉、学术服务或专著"></textarea></label>
+        <p v-if="profile.reviewStatus === 'PENDING_REVIEW'" class="teacher-published-note">资料正在审核。你可以继续修改并保存；审核通过前，学生仍看到当前已公开版本。</p>
+        <p v-else-if="profile.publishedResearchDirections || profile.publishedBiography || profile.publishedEducationExperience || profile.publishedWorkExperience || profile.publishedCourses || profile.publishedResearchAndAchievements" class="teacher-published-note">当前已公开版本仍保持展示，直到新版本审核通过。</p>
         <p v-if="profile.reviewComment" class="teacher-review-comment">最近审核意见：{{ profile.reviewComment }}</p>
-        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在提交…' : '提交管理员审核' }}</button>
+        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在保存…' : profile.reviewStatus === 'PENDING_REVIEW' ? '保存待审核修改' : '提交管理员审核' }}</button>
+        <slot name="account-security" />
       </div>
     </section>
 
     <section v-else class="teacher-panel"><TeacherApplicationScopePanel /></section>
+    <EmailSecurityPanel v-show="section === 'profile'" />
   </div>
 </template>
 
@@ -403,7 +459,17 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
 .teacher-results-table th,.teacher-results-table td { padding: 11px 9px; border-bottom: 1px solid #e7edef; text-align: left; white-space: nowrap; }
 .teacher-results-table th { color: var(--hnust-muted); font-weight: 650; }
 .teacher-review-badge { border-radius: 3px; background: #f1f5f6; }
+.teacher-profile-avatar { overflow: hidden; }
+.teacher-profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.teacher-profile-avatar span { display: block; }
 .teacher-profile-form { display: grid; max-width: 760px; gap: 15px; }
+.teacher-avatar-editor { display: flex; align-items: center; gap: 16px; padding: 16px; border: 1px solid #dce7ed; border-radius: 8px; background: #f8fbfc; }
+.teacher-avatar-preview { width: 88px; height: 88px; flex: 0 0 88px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #e7f0f3; color: var(--hnust-blue-dark); font-size: 28px; font-weight: 750; }
+.teacher-avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+.teacher-avatar-editor p { margin: 5px 0 10px; color: var(--hnust-muted); font-size: 12px; line-height: 1.6; }
+.teacher-avatar-picker { display: inline-flex !important; width: fit-content; cursor: pointer; padding: 7px 12px; border-radius: 4px; background: var(--hnust-blue-dark); color: white !important; font-size: 12px !important; }
+.teacher-avatar-picker input { display: none; }
+.teacher-avatar-remove { margin-left: 10px; border: 0; background: transparent; color: #a54b4b; cursor: pointer; font-size: 12px; }
 .teacher-profile-identity { display: flex; align-items: center; gap: 11px; padding-bottom: 12px; border-bottom: 1px solid #e4ecee; }
 .teacher-profile-identity div { display: grid; gap: 4px; }
 .teacher-profile-identity strong { color: var(--hnust-blue-deep); }

@@ -70,15 +70,13 @@ public class StudentProfileVO {
         private String fileName;
         private Long sizeBytes;
         private String uploadedAt;
-        private String scanStatus;
 
         public StudentResumeVO() { }
-        public StudentResumeVO(Long fileId, String fileName, Long sizeBytes, String uploadedAt, String scanStatus) {
+        public StudentResumeVO(Long fileId, String fileName, Long sizeBytes, String uploadedAt) {
             this.fileId = fileId;
             this.fileName = fileName;
             this.sizeBytes = sizeBytes;
             this.uploadedAt = uploadedAt;
-            this.scanStatus = scanStatus;
         }
         public Long getFileId() { return fileId; }
         public void setFileId(Long fileId) { this.fileId = fileId; }
@@ -88,7 +86,5 @@ public class StudentProfileVO {
         public void setSizeBytes(Long sizeBytes) { this.sizeBytes = sizeBytes; }
         public String getUploadedAt() { return uploadedAt; }
         public void setUploadedAt(String uploadedAt) { this.uploadedAt = uploadedAt; }
-        public String getScanStatus() { return scanStatus; }
-        public void setScanStatus(String scanStatus) { this.scanStatus = scanStatus; }
     }
 }

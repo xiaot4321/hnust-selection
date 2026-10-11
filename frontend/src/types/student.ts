@@ -47,7 +47,6 @@ export interface StudentResume {
   fileName: string
   sizeBytes: number
   uploadedAt: string
-  scanStatus: 'PENDING' | 'AVAILABLE' | 'REJECTED'
 }
 
 export interface StudentProfile {
@@ -83,11 +82,16 @@ export interface TeacherDirectoryItem {
   allowedDegreeTypes: DegreeType[]
   allowedMajors: StudentMajor[]
   canApply: boolean
+  avatarUrl: string | null
   officialProfile: TeacherOfficialProfile | null
 }
 
 export interface TeacherDetail extends TeacherDirectoryItem {
   biography: string
+  educationExperience: string | null
+  workExperience: string | null
+  courses: string | null
+  researchAndAchievements: string | null
 }
 
 export interface TeacherOfficialProfile {

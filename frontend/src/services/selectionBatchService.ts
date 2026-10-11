@@ -81,9 +81,11 @@ export const selectionBatchService = {
     return request(`/admin/selection-batches/academic-years?collegeId=${collegeId}`)
   },
   batches(collegeId: number): Promise<BatchSummary[]> {
-    return request(`/admin/selection-batches?collegeId=${collegeId}`)
+    return request(`/admin/selection-batches?collegeId=${collegeId}`, { cache: 'no-store' })
   },
-  batch(batchId: number): Promise<BatchDetail> { return request(`/admin/selection-batches/${batchId}`) },
+  batch(batchId: number): Promise<BatchDetail> {
+    return request(`/admin/selection-batches/${batchId}`, { cache: 'no-store' })
+  },
   /** 创建草稿属于命令；保留键用于网络超时后的安全重试。 */
   create(payload: Record<string, unknown>): Promise<BatchDetail> {
     const body = json(payload)
@@ -106,6 +108,11 @@ export const selectionBatchService = {
   /** 发布命令带幂等键，避免响应丢失后重复占用学院/学年运行槽位。 */
   publish(batchId: number): Promise<BatchDetail> {
     return mutate(`POST /admin/selection-batches/${batchId}/publish`, `/admin/selection-batches/${batchId}/publish`, { method: 'POST' })
+  },
+  /** 撤回未启动批次的发布，继续使用相同的命令幂等语义。 */
+  unpublish(batchId: number): Promise<BatchDetail> {
+    const path = `/admin/selection-batches/${batchId}/unpublish`
+    return mutate(`POST ${path}`, path, { method: 'POST' })
   },
   /** 启动命令带幂等键，确保重试不会重复写入生命周期操作。 */
   start(batchId: number): Promise<BatchDetail> {
@@ -130,9 +137,16 @@ export const selectionBatchService = {
       method: 'POST', headers: { 'If-Match': `"batch-${version}"` }, body,
     })
   },
-  quotas(batchId: number): Promise<TeacherQuota[]> { return request(`/admin/selection-batches/${batchId}/teachers`) },
+  majorsForBatch(batchId: number): Promise<BatchMajor[]> {
+    return request(`/admin/selection-batches/${batchId}/majors`, { cache: 'no-store' })
+  },
+  quotas(batchId: number): Promise<TeacherQuota[]> {
+    return request(`/admin/selection-batches/${batchId}/teachers`, { cache: 'no-store' })
+  },
   /** 统计使用填报开窗时冻结的名单分母；查询不接受会改变口径的筛选条件。 */
-  statistics(batchId: number): Promise<BatchStatistics> { return request(`/admin/selection-batches/${batchId}/statistics`) },
+  statistics(batchId: number): Promise<BatchStatistics> {
+    return request(`/admin/selection-batches/${batchId}/statistics`, { cache: 'no-store' })
+  },
   /** 每次名额设置携带当前强版本标签，并按批次/导师/上限/版本生成独立幂等签名。 */
   setQuota(batchId: number, row: TeacherQuota, quotaLimit: number): Promise<TeacherQuota> {
     const body = json({ quotaLimit })

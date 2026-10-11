@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 @Service
@@ -55,6 +56,40 @@ public class AdminRelationAdjustmentServiceImpl implements AdminRelationAdjustme
         requireReadScope(current, batch.getCollegeId(), batch.getId());
         List<AdminMatchingRelationVO> items = repository.list(batchId, pageNo, pageSize);
         return new PageResult<AdminMatchingRelationVO>(items, repository.count(batchId), pageNo, pageSize);
+    }
+
+    /**
+     * 取消批次时逐条走现有关系撤销事务步骤，保证匹配关系、年度槽位、导师名额、流水和审计一致。
+     * 调用方持有批次取消事务；所有关系调整与批次状态切换一起提交或回滚。
+     */
+    @Override
+    @Transactional
+    public int revokeLockedForBatchCancellation(AccountPrincipal actor, Long batchId, String reason) {
+        if (reason == null || reason.trim().isEmpty()) throw invalid("关系撤销原因不能为空");
+        AccountPrincipal current = refresh(actor, true);
+        cn.hnust.selection.entity.SelectionBatchEntity batch = batches.findBatch(batchId)
+            .orElseThrow(() -> notFound("批次不存在或当前账号无权访问"));
+        if (!authorizations.hasCapability(current, MANAGER, batch.getCollegeId(), batchId)) {
+            throw notFound("批次不存在或当前账号无权访问");
+        }
+
+        int revoked = 0;
+        int pageNo = 1;
+        while (true) {
+            List<AdminMatchingRelationVO> rows = repository.list(batchId, pageNo, 100);
+            if (rows.isEmpty()) break;
+            for (AdminMatchingRelationVO relation : rows) {
+                if (!"LOCKED".equals(relation.getRelationStatus())) continue;
+                AdjustMatchingRelationRequest request = new AdjustMatchingRelationRequest();
+                request.setAdjustmentType("REVOKE");
+                request.setReason(reason.trim());
+                adjust(current, relation.getRelationId(), request, relation.getEtag(), UUID.randomUUID().toString());
+                revoked++;
+            }
+            if (rows.size() < 100) break;
+            pageNo++;
+        }
+        return revoked;
     }
 
     @Override

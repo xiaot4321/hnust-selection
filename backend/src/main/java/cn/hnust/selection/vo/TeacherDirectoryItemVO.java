@@ -12,6 +12,7 @@ public class TeacherDirectoryItemVO {
     private List<AllowedMajorVO> allowedMajors;
     private boolean canApply;
     private TeacherOfficialProfileVO officialProfile;
+    private String avatarUrl;
 
     public Long getTeacherId() { return teacherId; }
     public void setTeacherId(Long teacherId) { this.teacherId = teacherId; }
@@ -31,4 +32,6 @@ public class TeacherDirectoryItemVO {
     public void setCanApply(boolean canApply) { this.canApply = canApply; }
     public TeacherOfficialProfileVO getOfficialProfile() { return officialProfile; }
     public void setOfficialProfile(TeacherOfficialProfileVO officialProfile) { this.officialProfile = officialProfile; }
+    public String getAvatarUrl() { return avatarUrl; }
+    public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
 }

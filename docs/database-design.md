@@ -1,9 +1,10 @@
 # 师生互选系统物理数据库设计与数据字典
 
-> 版本：1.1（年度资格批量维护与历史授权表状态）
-> 状态：本机 MySQL 5.7.36-log 验证库已应用人员管理、凭证、管理员导出、导师公开资料缓存及批次参与授权迁移，当前为 54 张表、167 个外键；参与授权迁移前备份为 `%TEMP%\hnust_selection_before_batch_participant_authorization_20261008.sql`。该迁移现仅保留历史物理表，应用代码不再读写批次参与表或 `supplement_teacher`；完整建库 DDL 仍保留历史表，合计 54 张表、167 个外键。此次决策不运行回滚或删除表，避免丢弃已存在数据。其他/生产环境执行前须核对版本、备份和回滚方案；本机历史升级不构成生产部署批准。
+> 版本：1.4（导师头像文件引用）
+> 状态：本机 MySQL 5.7.36-log 验证库已应用人员管理、凭证、管理员导出、导师公开资料缓存、批次参与授权和导师资料栏目迁移，当前仍为 54 张表、167 个外键；参与授权迁移前备份为 `%TEMP%\hnust_selection_before_batch_participant_authorization_20261008.sql`。该迁移现仅保留历史物理表，应用代码不再读写批次参与表或 `supplement_teacher`。新增头像文件引用迁移已准备但尚未应用；完整建库 DDL 为 54 张表、168 个外键。其他/生产环境执行前须核对版本、备份和回滚方案；本机历史升级不构成生产部署批准。
 > 更新日期：2026-10-08
-> 基线：[总体需求](../requirements.md) 0.33、[逻辑数据模型](logical-data-model.md) 0.14、[待确认事项登记表](todo-register.md) 3.7 第 6 节。时间存储约定沿用 [API 设计](api-design.md) 2.0 的 UTC 约定。
+> 本次新增四个导师公开资料列的迁移已于 2026-10-08 备份后应用到本机验证库；核验为 54 张表、167 个外键，四列均存在。头像字段迁移尚未应用；其他环境均未执行。
+> 基线：[总体需求](../requirements.md) 0.37、[逻辑数据模型](logical-data-model.md) 0.17、[待确认事项登记表](todo-register.md) 3.10 第 6 节。时间存储约定沿用 [API 设计](api-design.md) 2.5 的 UTC 约定。
 
 ## 1. 范围与设计原则
 
@@ -96,7 +97,7 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | `student` | `account_id BIGINT`, `student_no VARCHAR(64)`, `full_name VARCHAR(128)`, `college_id BIGINT`, `major_id BIGINT`, `degree_type VARCHAR(32)`, `classification_version INTEGER`, `enrollment_year_code VARCHAR(16)`, `graduation_date DATE NULL`, `graduation_date_basis TEXT NULL`, `graduation_date_confirmed_at DATETIME(3) NULL` | `UNIQUE(student_no)`, `UNIQUE(account_id)`；FK 至学院/专业/账号。毕业日期未确认时附件不自动清理。 |
 | `teacher` | `account_id BIGINT`, `employee_no VARCHAR(64)`, `full_name VARCHAR(128)`, `college_id BIGINT`, `current_public_profile_version_id BIGINT NULL` | `UNIQUE(employee_no)`, `UNIQUE(account_id)`；公开资料当前指针须属于该导师。 |
 | `student_profile_version` | `student_id BIGINT`, `version_no INTEGER`, `biography TEXT NULL`, `contact_text VARCHAR(255) NULL`, `resume_file_id BIGINT NULL`, `changed_by BIGINT`, `changed_at DATETIME(3)` | `UNIQUE(student_id, version_no)`；FK 至学生、文件、账号；历史版本不可覆盖。 |
-| `teacher_public_profile_version` | `teacher_id BIGINT`, `version_no INTEGER`, `research_directions TEXT NULL`, `biography TEXT NULL`, `review_status VARCHAR(24)`, `submitted_at DATETIME(3)`, `reviewed_by BIGINT NULL`, `reviewed_at DATETIME(3) NULL`, `review_comment TEXT NULL`, `published_at DATETIME(3) NULL` | `UNIQUE(teacher_id, version_no)`；公开目录只读审核通过版本。 |
+| `teacher_public_profile_version` | `teacher_id BIGINT`, `version_no INTEGER`, `research_directions TEXT NULL`, `biography TEXT NULL`, `education_experience TEXT NULL`, `work_experience TEXT NULL`, `courses TEXT NULL`, `research_and_achievements TEXT NULL`, `avatar_file_id BIGINT NULL`, `review_status VARCHAR(24)`, `submitted_at DATETIME(3)`, `reviewed_by BIGINT NULL`, `reviewed_at DATETIME(3) NULL`, `review_comment TEXT NULL`, `published_at DATETIME(3) NULL` | `UNIQUE(teacher_id, version_no)`；`avatar_file_id` FK 至 `managed_file`；导师可在待审核期间更新同一版本，条件更新 `row_version` 并刷新 `submitted_at`；资料修改/审核都先锁导师行再锁定资料版本，旧 ETag 审核请求拒绝；仅已审核版本供学生读取，文本字段为空时可由核验学校主页资料补充。头像文件由导师上传、管理员与同版文字共同审核，通过后才公开。 |
 | `teacher_official_profile_cache` | `teacher_id BIGINT`, `matched_full_name VARCHAR(128)`, `matched_college_name VARCHAR(128)`, `photo_url VARCHAR(1024) NULL`, `professional_title VARCHAR(128) NULL`, `education_level VARCHAR(64) NULL`, `department VARCHAR(128) NULL`, `teaching_level VARCHAR(128) NULL`, `research_directions TEXT NULL`, `biography TEXT NULL`, `education_experience TEXT NULL`, `work_experience TEXT NULL`, `courses TEXT NULL`, `research_and_achievements TEXT NULL`, `profile_url VARCHAR(1024)`, `cached_at DATETIME(3)` | `PK/FK(teacher_id)`；仅保存按姓名、学院唯一核验的学校门户公开学术资料，不保存电话、邮箱或性别；可丢弃并按 30 天刷新，缓存不能替代管理员审核版本。 |
 | `annual_eligibility` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_status VARCHAR(24)`, `evidence_type VARCHAR(32)`, `evidence_reference TEXT NULL`, `source_name VARCHAR(128) NULL`, `valid_from DATETIME(3) NULL`, `valid_to DATETIME(3) NULL`, `changed_by BIGINT` | FK 至学年/学院/学生/导师；服务端校验 `student_id` 与 `teacher_id` 恰有一个非空；变更追加历史行，旧当前行设置 `valid_to`。状态值为 `ELIGIBLE`/`INELIGIBLE`。 |
 | `annual_eligibility_slot` | `academic_year_id BIGINT`, `college_id BIGINT`, `student_id BIGINT NULL`, `teacher_id BIGINT NULL`, `eligibility_id BIGINT`, `claimed_at DATETIME(3)` | 当前资格投影；`UNIQUE(academic_year_id, student_id)`、`UNIQUE(academic_year_id, teacher_id)`、`UNIQUE(eligibility_id)` 保证每人每学年最多一条当前资格；学生/导师引用恰有一个非空由 Service 校验，人员行锁串行化修改。 |
@@ -206,6 +207,7 @@ MySQL 5.7 不提供通用的部分唯一索引；本设计以 `batch_running_slo
 | 提交志愿 | 锁定阶段行后读取数据库 UTC 时间，按 `[startAt,endAt)` 校验填报窗口；再检查账号、年度资格、身份确认版本、导师年度资格与冻结范围。插入完整 `preference_submission` 与 1–3 条 `preference_item`；更新批次学生当前版本指针并写事件/操作/审计。任何校验失败整笔回滚；截止前通过校验的事务可以在截止后提交（TODO-50）。 |
 | 导师录取（常规或补选） | 每项办理在独立事务内锁定阶段行并按数据库 UTC 时间校验窗口，再校验申请、学生状态/范围/资格和名额；需要读取并协调多行状态时由 Mapper 用 `SELECT ... FOR UPDATE` 锁定相应行。以唯一键占用 `student_year_match_slot`，并通过带条件更新确保名额仍有余额；建立 LOCKED 关系，更新批次学生、名额并写 `quota_ledger`、状态/申请事件、操作、审计及站内通知收件记录。任何唯一键冲突、条件更新影响行数不符或业务校验失败都回滚该项事务。 |
 | 名额控制 | 对 `batch_teacher_quota` 做带 `row_version` 的条件更新，要求 `occupied_count < quota_limit`；名额调整须 `new_limit >= occupied_count`。受影响行数为 0 表示额度或版本已变化，Service 重新读取并按业务规则返回冲突；使用 InnoDB 行锁/条件更新，按稳定顺序获取多行锁并对幂等操作有限重试。独立批量操作无全局 FIFO；竞争最后名额时由先获得名额行锁并成功提交的操作取得（TODO-51）。 |
+| 导师公开资料编辑/审核 | 资料实际修改时在事务内更新当前待审资料、`row_version`、提交时间及业务操作/审计；内容未变时不写入。导师资料编辑和管理员审核均先锁导师行再锁版本行；管理员使用旧 ETag 时拒绝审核，须刷新最新内容。 |
 | 撤销/恢复/改派关系 | 与关系状态、学年槽位、旧/新导师名额、两侧名额流水、匹配状态、纠错记录、审计和通知同事务；改派整体成功或整体失败。 |
 | 补选申请 | 校验窗口、UNMATCHED、学生资格、导师年度资格/账号/资料/冻结范围/名额及同年关系；不查独立导师许可名单。先成功占用 `student_pending_supplement_slot` 再提交申请和资料快照；不预扣名额。结案时释放槽位。 |
 | 暂停/恢复/重开/关闭阶段 | 更新批次及阶段、时间修订、生命周期与相关申请事件；批量结案可分片执行，但须具备幂等键/游标，阶段完全结案前不可宣告关闭。补选关闭时最终将批次置为 COMPLETED。 |

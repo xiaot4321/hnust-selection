@@ -47,12 +47,15 @@ public interface SelectionBatchManagementService {
     SelectionBatchDetailVO updateBatch(AccountPrincipal actor, Long batchId,
         UpdateSelectionBatchRequest request, long expectedVersion);
 
-    /** 完整替换排期；阶段时间顺序和运行中阶段可调整范围由服务端校验。 */
+    /** 完整替换排期；发布后按阶段状态校验，暂停时允许调整当前和未开始阶段的时间。 */
     SelectionBatchDetailVO saveSchedule(AccountPrincipal actor, Long batchId,
         BatchScheduleRequest request, long expectedVersion);
 
     /** 发布草稿并原子占用学院/学年运行槽位，创建规则快照和审计记录。 */
     SelectionBatchDetailVO publish(AccountPrincipal actor, Long batchId, String idempotencyKey);
+
+    /** 撤回尚未启动的已发布批次，释放运行槽位并保留排期与发布历史。 */
+    SelectionBatchDetailVO unpublish(AccountPrincipal actor, Long batchId, String idempotencyKey);
 
     /** 启动已发布批次；若填报窗口此刻开放，会在同一事务冻结名单与导师范围。 */
     SelectionBatchDetailVO start(AccountPrincipal actor, Long batchId, String idempotencyKey);
@@ -63,7 +66,7 @@ public interface SelectionBatchManagementService {
     /** 恢复暂停批次，并平移仍有效的阶段与补选窗口时间。 */
     SelectionBatchDetailVO resume(AccountPrincipal actor, Long batchId, String idempotencyKey);
 
-    /** 取消尚未结束的批次，结案待处理申请并将未匹配学生记为 UNMATCHED。 */
+    /** 取消尚未结束的批次，撤销本批次锁定关系并回退名额，保留关系及业务历史。 */
     SelectionBatchDetailVO cancel(AccountPrincipal actor, Long batchId, String idempotencyKey);
 
     /** 归档已完成批次。 */

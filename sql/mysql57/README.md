@@ -1,6 +1,6 @@
 # MySQL 5.7.36 建库脚本
 
-`schema.sql` 是按 `docs/database-design.md` 1.1 数据字典生成的完整首次建库脚本，包含 54 张表、主键、唯一键、查询索引及 167 个外键。为与本机已应用迁移后的结构保持一致，脚本仍包含已停用的批次参与授权历史表；当前应用不读写这些表。脚本不写入业务人员数据，也不执行 `DROP`。
+`schema.sql` 是按 `docs/database-design.md` 当前数据字典生成的完整首次建库脚本，包含 54 张表、主键、唯一键、查询索引及 168 个外键。为与本机已应用迁移后的结构保持一致，脚本仍包含已停用的批次参与授权历史表；当前应用不读写这些表。脚本不写入业务人员数据，也不执行 `DROP`。
 
 本机库已应用初始 0.5 结构（49 张表、151 个外键）。2026-10-03 首次执行 `migrations/20261003_personnel_management_v1.sql` 时，结构变更成功，但 MySQL 客户端会话使用 GBK，导致预检查询报错及总管理员授权/审计数据写入失败。随后执行 `migrations/20261003_personnel_management_v1_recovery.sql`，两个结构计数均为 1，管理员授权和审计记录各写入一条。该本机迁移现已完成；不可重跑完整迁移。目标为其他或生产环境时，须先核对版本、备份、迁移与回滚方案。
 
@@ -11,6 +11,10 @@ TODO-31/58 已改为所有角色的一次性临时凭证均不设到期时间。
 2026-10-08 为学生导师目录增加可丢弃的 `teacher_official_profile_cache` 表，完整建库 DDL 共 52 张表、161 个外键。本机验证库已先备份至 `%TEMP%\hnust_selection_before_teacher_official_profile_cache_20261008.sql`，再执行 `migrations/20261008_teacher_official_profile_cache_v1.sql`；核验为 52 张表、161 个外键，且缓存表及其导师外键均存在。回滚脚本 `migrations/20261008_teacher_official_profile_cache_v1_rollback.sql` 会删除缓存表及其全部缓存资料。其他或生产环境执行前仍须核对目标版本、备份与回滚方案。
 
 2026-10-08 曾新增草稿批次学生与常规导师参与授权表 `batch_student_participation`、`batch_teacher_participation`，并应用到本机验证库；完整结构为 54 张表、167 个外键。随后 TODO-68 撤销了应用层批次参与授权规则，表和迁移文件因已应用且可能含历史数据而保留，但当前代码不读写这些表。此前备份位于 `%TEMP%\hnust_selection_before_batch_participant_authorization_20261008.sql`。回滚脚本会删除两张授权表及其中全部记录；不要为实现业务规则变更而运行该回滚。只有另有明确的数据清理/迁移方案时，才可单独评估其适用性和数据风险。
+
+2026-10-08 新增导师公开资料维护栏目 `education_experience`、`work_experience`、`courses`、`research_and_achievements`，均为可空 `TEXT`，不增加表或外键。完整建库 DDL 已同步；执行前备份至 `%TEMP%\hnust_selection_before_teacher_public_profile_fields_20261008.sql` 后，已将前向迁移 `migrations/20261008_teacher_public_profile_fields_v1.sql` 应用到本机验证库，核验四列均存在且表数/外键数仍为 54/167。回滚脚本 `migrations/20261008_teacher_public_profile_fields_v1_rollback.sql` 会删除四列中的全部资料。其他数据库执行前须核对结构、备份和回滚方案。
+
+2026-10-08 新增导师公开资料头像引用 `teacher_public_profile_version.avatar_file_id`，关联 `managed_file` 并增加一个外键；头像对象使用现有 OSS 私有存储。2026-10-09 备份本机验证库至 `%TEMP%\hnust_selection_before_teacher_public_profile_avatar_20261009.sql` 后，应用前向迁移 `migrations/20261008_teacher_public_profile_avatar_v1.sql`；核验 MySQL 5.7.36-log、54 张表、168 个外键及头像列/外键均存在。完整建库 DDL 同为 54 张表、168 个外键。执行前须备份并核对四个公开资料栏目迁移已应用；回滚会删除资料版本与头像文件的关联，不删除 OSS 对象。其他环境仍须先核对结构、备份和回滚方案。
 
 若当前已经位于 `mysql>` 提示符，可直接执行恢复脚本：
 

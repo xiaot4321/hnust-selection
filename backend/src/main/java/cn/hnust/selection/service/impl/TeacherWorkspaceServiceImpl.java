@@ -15,6 +15,8 @@ import cn.hnust.selection.request.BulkDecideTeacherApplicationsRequest;
 import cn.hnust.selection.request.SendTeacherApplicationNoticeRequest;
 import cn.hnust.selection.request.UpdateTeacherProfileRequest;
 import cn.hnust.selection.security.AccountPrincipal;
+import cn.hnust.selection.service.PrivateFileStorage;
+import cn.hnust.selection.service.PrivateFileStorage.StoredPrivateFile;
 import cn.hnust.selection.service.TeacherWorkspaceService;
 import cn.hnust.selection.vo.TeacherApplicationVO;
 import cn.hnust.selection.vo.TeacherBatchSummaryVO;
@@ -26,15 +28,18 @@ import cn.hnust.selection.vo.TeacherBulkDecisionAcceptedVO;
 import cn.hnust.selection.vo.TeacherBulkOperationVO;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
@@ -45,39 +50,68 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 @Service
 public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
     private static final Pattern UUID_V4 = Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$");
     private final TeacherWorkspaceRepository repository;
+    private final PrivateFileStorage fileStorage;
     private final TransactionTemplate transactionTemplate;
     private final TaskExecutor bulkTaskExecutor;
+    @Autowired
     public TeacherWorkspaceServiceImpl(TeacherWorkspaceRepository repository, PlatformTransactionManager transactionManager,
-        @Qualifier("teacherBulkTaskExecutor") TaskExecutor bulkTaskExecutor) {
+        @Qualifier("teacherBulkTaskExecutor") TaskExecutor bulkTaskExecutor, PrivateFileStorage fileStorage) {
         this.repository = repository; this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.bulkTaskExecutor = bulkTaskExecutor;
+        this.fileStorage = fileStorage;
+    }
+    public TeacherWorkspaceServiceImpl(TeacherWorkspaceRepository repository, PlatformTransactionManager transactionManager,
+        TaskExecutor bulkTaskExecutor) {
+        this(repository, transactionManager, bulkTaskExecutor, null);
     }
 
     @Override
     @Transactional(readOnly = true)
     public TeacherProfileVO getProfile(AccountPrincipal actor) {
-        return repository.findProfile(requireTeacher(actor)).orElseThrow(() -> notFound("导师资料不存在"));
+        return withAvatarUrls(repository.findProfile(requireTeacher(actor)).orElseThrow(() -> notFound("导师资料不存在")));
     }
 
     @Override
     @Transactional
     public TeacherProfileVO updateProfile(AccountPrincipal actor, String ifMatch, UpdateTeacherProfileRequest request) {
+        return withAvatarUrls(updateProfileInTransaction(actor, ifMatch, request, null, false, null));
+    }
+
+    @Override
+    public TeacherProfileVO updateProfileWithAvatar(AccountPrincipal actor, String ifMatch,
+        UpdateTeacherProfileRequest request, MultipartFile avatar, boolean clearAvatar) {
+        final AtomicReference<StoredPrivateFile> storedFile = new AtomicReference<StoredPrivateFile>();
+        try {
+            TeacherProfileVO updated = transactionTemplate.execute(status -> updateProfileInTransaction(
+                actor, ifMatch, request, avatar, clearAvatar, storedFile));
+            // TransactionTemplate returns only after commit, so the new OSS object now has a database reference.
+            storedFile.set(null);
+            return withAvatarUrls(updated);
+        } catch (RuntimeException ex) {
+            fileStorage.delete(storedFile.get());
+            throw ex;
+        }
+    }
+
+    private TeacherProfileVO updateProfileInTransaction(AccountPrincipal actor, String ifMatch,
+        UpdateTeacherProfileRequest request, MultipartFile avatar, boolean clearAvatar,
+        AtomicReference<StoredPrivateFile> storedFile) {
         Long teacherId = requireTeacher(actor);
         if (request == null) throw invalid("请填写导师公开资料");
+        boolean uploadAvatar = avatar != null && !avatar.isEmpty();
+        if (uploadAvatar && clearAvatar) throw invalid("不能同时上传和移除头像");
         if (ifMatch == null || ifMatch.trim().isEmpty()) {
             throw new ApiException("PRECONDITION_REQUIRED", "更新资料必须提供 If-Match", HttpStatus.PRECONDITION_REQUIRED);
         }
         if (!repository.lockTeacher(teacherId, actor.getAccountId())) throw notFound("导师资料不存在");
         TeacherProfileVO current = repository.findProfile(teacherId).orElseThrow(() -> notFound("导师资料不存在"));
-        if ("PENDING_REVIEW".equals(current.getReviewStatus())) {
-            throw new ApiException("PROFILE_ALREADY_SUBMITTED", "你已经提交审核，无需再次提交。", HttpStatus.CONFLICT);
-        }
         if (!current.getEtag().equals(ifMatch.trim())) {
             throw new ApiException("PRECONDITION_FAILED", "资料已更新，请重新读取后再保存", HttpStatus.PRECONDITION_FAILED);
         }
@@ -91,19 +125,73 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
             workExperience.length() > 10000 || courses.length() > 10000 || researchAndAchievements.length() > 10000) {
             throw invalid("导师公开资料超出长度限制");
         }
+        // Existing latest-version avatar is preserved unless the teacher selects a replacement or removes it.
+        Long avatarFileId = current.getSubmittedAvatarFileId();
+        if (clearAvatar) avatarFileId = null;
+        if (uploadAvatar) {
+            StoredPrivateFile stored;
+            try { stored = fileStorage.storeTeacherProfileAvatar(avatar); }
+            catch (IOException ex) {
+                if (ex.getCause() != null) throw new ApiException("INTERNAL_ERROR", "无法保存导师头像", HttpStatus.INTERNAL_SERVER_ERROR);
+                throw invalid(ex.getMessage());
+            }
+            if (storedFile != null) storedFile.set(stored);
+            avatarFileId = repository.insertTeacherProfileAvatar(actor.getAccountId(), stored.getFilename(),
+                stored.getMediaType(), stored.getSize(), stored.getDigest(), stored.getKey());
+        }
+        if ("PENDING_REVIEW".equals(current.getReviewStatus())) {
+            if (sameProfileContent(current, directions, biography, educationExperience, workExperience, courses,
+                researchAndAchievements, avatarFileId)) return current;
+            String beforeHash = profileContentHash(current.getSubmittedResearchDirections(), current.getSubmittedBiography(),
+                current.getSubmittedEducationExperience(), current.getSubmittedWorkExperience(), current.getSubmittedCourses(),
+                current.getSubmittedResearchAndAchievements(), avatarValue(current.getSubmittedAvatarFileId()));
+            String afterHash = profileContentHash(directions, biography, educationExperience, workExperience, courses,
+                researchAndAchievements, avatarValue(avatarFileId));
+            int versionNo = current.getVersionNo().intValue();
+            long rowVersion = current.getProfileRowVersion().longValue();
+            int changed = avatarFileId == null && current.getSubmittedAvatarFileId() == null
+                ? repository.updatePendingProfile(teacherId, versionNo, rowVersion, directions, biography,
+                    educationExperience, workExperience, courses, researchAndAchievements)
+                : repository.updatePendingProfile(teacherId, versionNo, rowVersion, directions, biography,
+                    educationExperience, workExperience, courses, researchAndAchievements, avatarFileId);
+            if (changed != 1) {
+                throw new ApiException("PRECONDITION_FAILED", "资料已更新，请重新读取后再保存", HttpStatus.PRECONDITION_FAILED);
+            }
+            long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_UPDATE_PENDING",
+                UUID.randomUUID().toString(), hash("PROFILE_PENDING_EDIT|" + teacherId + "|" + versionNo + "|" +
+                    beforeHash + "|" + afterHash));
+            repository.insertAudit(actor.getAccountId(), null, "TEACHER_PUBLIC_PROFILE_VERSION", Long.valueOf(versionNo),
+                "TEACHER_PROFILE_UPDATE_PENDING", profileAuditValues(versionNo, rowVersion, beforeHash, current.getSubmittedAvatarFileId()),
+                profileAuditValues(versionNo, rowVersion + 1L, afterHash, avatarFileId), Long.valueOf(operationId));
+            repository.completeOperation(Long.valueOf(operationId));
+            return repository.findProfile(teacherId).orElseThrow(() -> new ApiException("INTERNAL_ERROR", "资料更新后无法读取", HttpStatus.INTERNAL_SERVER_ERROR));
+        }
         int nextVersion = current.getVersionNo().intValue() + 1;
         if ("DRAFT".equals(current.getReviewStatus())) {
-            repository.updateDraftProfile(teacherId, current.getVersionNo().intValue(), directions, biography,
-                educationExperience, workExperience, courses, researchAndAchievements);
+            if (avatarFileId == null && current.getSubmittedAvatarFileId() == null) {
+                repository.updateDraftProfile(teacherId, current.getVersionNo().intValue(), directions, biography,
+                    educationExperience, workExperience, courses, researchAndAchievements);
+            } else {
+                repository.updateDraftProfile(teacherId, current.getVersionNo().intValue(), directions, biography,
+                    educationExperience, workExperience, courses, researchAndAchievements, avatarFileId);
+            }
         } else {
-            repository.insertProfileSubmission(teacherId, nextVersion, directions, biography, educationExperience,
-                workExperience, courses, researchAndAchievements);
+            if (avatarFileId == null && current.getSubmittedAvatarFileId() == null) {
+                repository.insertProfileSubmission(teacherId, nextVersion, directions, biography, educationExperience,
+                    workExperience, courses, researchAndAchievements);
+            } else {
+                repository.insertProfileSubmission(teacherId, nextVersion, directions, biography, educationExperience,
+                    workExperience, courses, researchAndAchievements, avatarFileId);
+            }
         }
         long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_SUBMIT",
             UUID.randomUUID().toString(), hash("PROFILE|" + teacherId + "|" + nextVersion + "|" + directions + "|" +
-                biography + "|" + educationExperience + "|" + workExperience + "|" + courses + "|" + researchAndAchievements));
+                biography + "|" + educationExperience + "|" + workExperience + "|" + courses + "|" + researchAndAchievements +
+                "|" + avatarValue(avatarFileId)));
         repository.insertAudit(actor.getAccountId(), null, "TEACHER_PUBLIC_PROFILE_VERSION", Long.valueOf(nextVersion),
-            "TEACHER_PROFILE_SUBMIT", null, "{\"versionNo\":" + nextVersion + ",\"reviewStatus\":\"PENDING_REVIEW\"}", operationId);
+            "TEACHER_PROFILE_SUBMIT", null, profileAuditValues(nextVersion, 0L,
+                profileContentHash(directions, biography, educationExperience, workExperience, courses,
+                    researchAndAchievements, avatarValue(avatarFileId)), avatarFileId), operationId);
         repository.completeOperation(operationId);
         return repository.findProfile(teacherId).orElseThrow(() -> new ApiException("INTERNAL_ERROR", "资料提交后无法读取", HttpStatus.INTERNAL_SERVER_ERROR));
     }
@@ -490,6 +578,44 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         if (pageNo < 1 || pageSize < 1 || pageSize > 100) throw invalid("分页参数超出范围");
     }
     private static String clean(String value) { return value == null ? "" : value.trim(); }
+    private TeacherProfileVO withAvatarUrls(TeacherProfileVO profile) {
+        try {
+            if (profile.getPublishedAvatarStorageKey() != null) {
+                profile.setPublishedAvatarUrl(fileStorage.temporaryReadUrl(profile.getPublishedAvatarStorageKey()));
+            }
+            if (profile.getSubmittedAvatarStorageKey() != null) {
+                profile.setSubmittedAvatarUrl(fileStorage.temporaryReadUrl(profile.getSubmittedAvatarStorageKey()));
+            }
+            return profile;
+        } catch (IOException ex) {
+            throw new ApiException("INTERNAL_ERROR", "暂时无法读取导师头像", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    private static boolean sameProfileContent(TeacherProfileVO current, String directions, String biography,
+        String educationExperience, String workExperience, String courses, String researchAndAchievements,
+        Long avatarFileId) {
+        return clean(current.getSubmittedResearchDirections()).equals(directions) &&
+            clean(current.getSubmittedBiography()).equals(biography) &&
+            clean(current.getSubmittedEducationExperience()).equals(educationExperience) &&
+            clean(current.getSubmittedWorkExperience()).equals(workExperience) &&
+            clean(current.getSubmittedCourses()).equals(courses) &&
+            clean(current.getSubmittedResearchAndAchievements()).equals(researchAndAchievements) &&
+            java.util.Objects.equals(current.getSubmittedAvatarFileId(), avatarFileId);
+    }
+    private static String profileContentHash(String... values) {
+        StringBuilder content = new StringBuilder();
+        for (String value : values) {
+            String normalized = clean(value);
+            content.append(normalized.length()).append(':').append(normalized);
+        }
+        return hash(content.toString());
+    }
+    private static String profileAuditValues(int versionNo, long rowVersion, String contentHash, Long avatarFileId) {
+        return "{\"versionNo\":" + versionNo + ",\"rowVersion\":" + rowVersion +
+            ",\"reviewStatus\":\"PENDING_REVIEW\",\"avatarFileId\":" +
+            (avatarFileId == null ? "null" : avatarFileId.toString()) + ",\"contentHash\":\"" + contentHash + "\"}";
+    }
+    private static String avatarValue(Long avatarFileId) { return avatarFileId == null ? "" : avatarFileId.toString(); }
     private static Long requireTeacher(AccountPrincipal actor) {
         if (actor == null || actor.getRole() != AccountRole.TEACHER || actor.getAccountId() == null ||
             actor.getIdentity() == null || actor.getIdentity().getId() == null) throw new ApiException("FORBIDDEN", "仅导师本人可访问导师工作台", HttpStatus.FORBIDDEN);

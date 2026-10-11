@@ -169,6 +169,11 @@ CREATE TABLE `teacher_public_profile_version` (
   `version_no` INTEGER NOT NULL,
   `research_directions` TEXT NULL,
   `biography` TEXT NULL,
+  `education_experience` TEXT NULL,
+  `work_experience` TEXT NULL,
+  `courses` TEXT NULL,
+  `research_and_achievements` TEXT NULL,
+  `avatar_file_id` BIGINT NULL,
   `review_status` VARCHAR(24) NOT NULL,
   `submitted_at` DATETIME(3) NOT NULL,
   `reviewed_by` BIGINT NULL,
@@ -180,6 +185,7 @@ CREATE TABLE `teacher_public_profile_version` (
   `row_version` BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_teacher_public_profile_version_teacher_id_version_no` (`teacher_id`, `version_no`),
+  KEY `ix_teacher_public_profile_version_avatar_file_id` (`avatar_file_id`),
   KEY `ix_teacher_public_profile_version_reviewed_by` (`reviewed_by`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;
 
@@ -1215,6 +1221,7 @@ ALTER TABLE `data_access_record` ADD CONSTRAINT `fk_data_access_record_result_fi
 ALTER TABLE `data_access_record` ADD CONSTRAINT `fk_data_access_record_accessed_file_id` FOREIGN KEY (`accessed_file_id`) REFERENCES `managed_file` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `audit_event` ADD CONSTRAINT `fk_audit_event_actor_account_id` FOREIGN KEY (`actor_account_id`) REFERENCES `account` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 ALTER TABLE `audit_event` ADD CONSTRAINT `fk_audit_event_business_operation_id` FOREIGN KEY (`business_operation_id`) REFERENCES `business_operation` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE `teacher_public_profile_version` ADD CONSTRAINT `fk_teacher_public_profile_version_avatar_file_id` FOREIGN KEY (`avatar_file_id`) REFERENCES `managed_file` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- MySQL 5.7 ignores CHECK constraints. Exactly-one-of, status, scope, and cross-row invariants
 -- remain validated in the application transaction as specified in the design document.

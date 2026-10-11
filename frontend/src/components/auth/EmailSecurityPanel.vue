@@ -49,31 +49,43 @@ onUnmounted(() => { clearInterval(timer) })
 </script>
 <template>
   <section class="email-security-panel" aria-labelledby="email-security-title">
-    <h3 id="email-security-title">邮箱与账号安全</h3>
-    <p>{{ boundEmail ? `已验证邮箱：${boundEmail}` : '尚未绑定邮箱。请先验证邮箱，忘记密码时才能通过邮件找回。' }}</p>
-    <p v-if="ready && !configured" class="form-error">邮件服务尚未配置，请联系管理员完成设置后再绑定。</p>
-    <form v-if="ready && configured" class="form-stack" @submit.prevent="challengeId ? confirm() : send()">
-      <label for="security-email">{{ boundEmail ? '更换绑定邮箱' : '绑定邮箱' }}</label>
-      <input id="security-email" v-model="email" type="email" autocomplete="email" maxlength="254" required :disabled="busy" />
-      <template v-if="!challengeId">
-        <label for="email-current-password">当前登录密码</label>
-        <input id="email-current-password" v-model="currentPassword" type="password" autocomplete="current-password" maxlength="128" required />
-        <button class="primary-button" type="submit" :disabled="busy || cooldown > 0">{{ busy ? '正在发送…' : cooldown > 0 ? `${cooldown} 秒后可发送` : '发送绑定验证码' }}</button>
-      </template>
-      <template v-else>
-        <label for="email-binding-code">邮箱验证码</label>
-        <input id="email-binding-code" v-model="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required />
-        <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在验证…' : '验证并绑定邮箱' }}</button>
-        <button class="text-button" type="button" :disabled="busy || cooldown > 0" @click="challengeId = ''; code = ''">{{ cooldown > 0 ? `${cooldown} 秒后可重新获取` : '重新获取验证码' }}</button>
-      </template>
-    </form>
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-    <p v-if="message" role="status">{{ message }}</p>
+    <details :open="Boolean(error || message || challengeId)">
+      <summary id="email-security-title">
+        <span>邮箱与账号安全</span>
+        <span class="email-security-status">{{ !ready ? '读取中' : boundEmail ? '已绑定' : '未绑定' }}</span>
+      </summary>
+      <div class="email-security-content">
+        <p>{{ boundEmail ? `已验证邮箱：${boundEmail}` : '绑定邮箱后，可通过邮件找回密码。' }}</p>
+        <p v-if="ready && !configured" class="form-error">邮件服务尚未配置，请联系管理员完成设置后再绑定。</p>
+        <form v-if="ready && configured" class="form-stack" @submit.prevent="challengeId ? confirm() : send()">
+          <label for="security-email">{{ boundEmail ? '更换绑定邮箱' : '绑定邮箱' }}</label>
+          <input id="security-email" v-model="email" type="email" autocomplete="email" maxlength="254" required :disabled="busy" />
+          <template v-if="!challengeId">
+            <label for="email-current-password">当前登录密码</label>
+            <input id="email-current-password" v-model="currentPassword" type="password" autocomplete="current-password" maxlength="128" required />
+            <button class="primary-button" type="submit" :disabled="busy || cooldown > 0">{{ busy ? '正在发送…' : cooldown > 0 ? `${cooldown} 秒后可发送` : '发送绑定验证码' }}</button>
+          </template>
+          <template v-else>
+            <label for="email-binding-code">邮箱验证码</label>
+            <input id="email-binding-code" v-model="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required />
+            <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在验证…' : '验证并绑定邮箱' }}</button>
+            <button class="text-button" type="button" :disabled="busy || cooldown > 0" @click="challengeId = ''; code = ''">{{ cooldown > 0 ? `${cooldown} 秒后可重新获取` : '重新获取验证码' }}</button>
+          </template>
+        </form>
+        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+        <p v-if="message" role="status">{{ message }}</p>
+      </div>
+    </details>
   </section>
 </template>
 <style scoped>
-.email-security-panel { margin: 20px 0; padding: 20px; border: 1px solid var(--hnust-line); border-radius: 8px; background: #fff; }
-.email-security-panel h3 { margin-top: 0; color: var(--hnust-blue-deep); }
+.email-security-panel { margin: 16px 0 0; border: 1px solid var(--hnust-line); border-radius: 8px; background: #fff; }
+.email-security-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; color: var(--hnust-blue-deep); cursor: pointer; font-weight: 700; list-style: none; }
+.email-security-panel summary::-webkit-details-marker { display: none; }
+.email-security-panel summary::after { content: '+'; color: var(--hnust-blue-dark); font-size: 18px; font-weight: 500; }
+.email-security-panel details[open] summary::after { content: '−'; }
+.email-security-status { margin-left: auto; color: var(--hnust-muted); font-size: 11px; font-weight: 500; }
+.email-security-content { padding: 0 16px 16px; }
 .email-security-panel p { line-height: 1.7; overflow-wrap: anywhere; }
 .email-security-panel form { max-width: 560px; }
 </style>

@@ -70,6 +70,7 @@ public class StudentProgressRepository {
             "item.preference_order, quota.teacher_id, teacher.full_name AS teacher_name, application.application_status, " +
             "DATE_FORMAT(application.decided_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS processed_at " +
             "FROM batch_student JOIN student ON student.id = batch_student.student_id " +
+            "JOIN selection_batch batch ON batch.id = batch_student.batch_id " +
             "JOIN batch_stage stage ON stage.batch_id = batch_student.batch_id " +
             "AND stage.stage_code IN ('ROUND_1','ROUND_2','ROUND_3') " +
             "LEFT JOIN preference_submission submission ON submission.id = COALESCE(batch_student.final_submission_id, batch_student.current_submission_id) " +

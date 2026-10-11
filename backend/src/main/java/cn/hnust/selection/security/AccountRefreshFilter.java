@@ -11,6 +11,8 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
@@ -29,6 +31,8 @@ import java.io.IOException;
  * 不把临时故障误判成账号失效；确认账号已删除、停用或凭证版本过期时才销毁当前 Session。</p>
  */
 public class AccountRefreshFilter extends OncePerRequestFilter {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AccountRefreshFilter.class);
+
     private final AccountAuthService accountAuthService;
     private final ObjectMapper objectMapper;
 
@@ -59,6 +63,8 @@ public class AccountRefreshFilter extends OncePerRequestFilter {
             current = null;
         } catch (DataAccessException exception) {
             // 数据库故障属于服务暂不可用，不清除会话；请求可在服务恢复后重试。
+            LOGGER.error("Failed to refresh authenticated account for {} {}",
+                request.getMethod(), request.getRequestURI(), exception);
             writeError(response, HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务暂时无法处理请求");
             return;
         }

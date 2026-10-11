@@ -6,9 +6,9 @@ import {
   personnelManagementService,
   type AcademicYearOption,
   type CollegeOption,
-  type EligibilityRecord,
   type ImportResult,
   type MajorRecord,
+  type PersonRecord,
 } from '../../services/personnelManagementService'
 
 /** 父页面只按会话授权控制入口显示；每个 API 仍由服务端复核真实权限和学院归属。 */
@@ -30,7 +30,6 @@ const teachers = ref<PersonRecord[]>([])
 const studentTotal = ref(0)
 const teacherTotal = ref(0)
 const majors = ref<MajorRecord[]>([])
-const eligibilityRows = ref<EligibilityRecord[]>([])
 const importResult = ref<ImportResult | null>(null)
 const createdPerson = ref<CreatedPerson | null>(null)
 const currentFile = ref<File | null>(null)
@@ -41,14 +40,10 @@ let loadingCount = 0
 let collegeDataRequestId = 0
 let studentListRequestId = 0
 let teacherListRequestId = 0
-const peopleType = ref<'STUDENT'>('STUDENT')
 const eligibilityYearId = ref<number | null>(null)
-const showEligibilityHistory = ref(false)
 const importLookupId = ref('')
 const studentSearch = ref('')
 const teacherSearch = ref('')
-const eligibilityIdentifier = ref('')
-const foundPerson = ref<PersonRecord | null>(null)
 
 // 人员新建表单只包含账号与学校基础档案字段；角色、初始密码和分类版本由后端生成。
 const studentForm = reactive({
@@ -58,11 +53,11 @@ const studentForm = reactive({
 const teacherForm = reactive({ employeeNo: '', fullName: '' })
 const majorForm = reactive({ majorCode: '', name: '', validFrom: '', validTo: '', changeBasis: '' })
 const editingMajorId = ref<number | null>(null)
-const eligibilityForm = reactive({ status: 'ELIGIBLE', evidenceType: 'ROSTER_IMPORT', evidenceReference: '' })
 const importForm = reactive({ personType: 'STUDENT' as 'STUDENT' | 'TEACHER' })
 
 const studentTotalPages = computed(() => Math.max(1, Math.ceil(studentTotal.value / pageSize)))
 const teacherTotalPages = computed(() => Math.max(1, Math.ceil(teacherTotal.value / pageSize)))
+const selectedCollegeName = computed(() => colleges.value.find((college) => college.id === collegeId.value)?.name ?? '')
 
 /** 共享加载状态使用计数，避免并发查询中较早结束的请求提前关闭加载提示。 */
 function beginLoading(): () => void {
@@ -150,8 +145,6 @@ watch(collegeId, (newCollegeId, previousCollegeId) => {
   teachers.value = []
   years.value = []
   majors.value = []
-  eligibilityRows.value = []
-  foundPerson.value = null
   editingMajorId.value = null
   Object.assign(majorForm, { majorCode: '', name: '', validFrom: '', validTo: '', changeBasis: '' })
   void loadCollegeData()
@@ -230,47 +223,6 @@ async function toggleMajor(major: MajorRecord): Promise<void> {
     })
     majors.value = await personnelManagementService.majors(collegeId.value)
     successMessage.value = major.active ? '专业已停用；历史人员档案保留原专业引用。' : '专业已重新启用。'
-  } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { saving.value = false }
-}
-
-async function lookupEligibilityPerson(): Promise<void> {
-  if (collegeId.value === null || !eligibilityIdentifier.value.trim()) return
-  resetMessages(); foundPerson.value = null
-  const finishLoading = beginLoading()
-  try {
-    const page = peopleType.value === 'STUDENT'
-      ? await personnelManagementService.students(collegeId.value, 1, eligibilityIdentifier.value)
-      : await personnelManagementService.teachers(collegeId.value, 1, eligibilityIdentifier.value)
-    foundPerson.value = page.items[0] ?? null
-    if (!foundPerson.value) errorMessage.value = '没有在当前授权学院找到这个学号或工号。'
-  } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { finishLoading() }
-}
-
-async function loadEligibility(): Promise<void> {
-  if (collegeId.value === null || eligibilityYearId.value === null) return
-  const finishLoading = beginLoading(); errorMessage.value = ''
-  try {
-    eligibilityRows.value = await personnelManagementService.eligibility(
-      collegeId.value, eligibilityYearId.value, peopleType.value, eligibilityIdentifier.value, showEligibilityHistory.value,
-    )
-  } catch (error) { errorMessage.value = friendlyError(error) }
-  finally { finishLoading() }
-}
-
-async function saveEligibility(): Promise<void> {
-  if (collegeId.value === null || eligibilityYearId.value === null || !foundPerson.value || saving.value) return
-  resetMessages(); saving.value = true
-  try {
-    await personnelManagementService.setEligibility({
-      personType: peopleType.value, personId: foundPerson.value.id, collegeId: collegeId.value,
-      academicYearId: eligibilityYearId.value, eligibilityStatus: eligibilityForm.status,
-      evidenceType: eligibilityForm.evidenceType, evidenceReference: eligibilityForm.evidenceReference,
-    })
-    successMessage.value = '年度资格已保存为新版本，历史记录仍可查询。'
-    foundPerson.value = null; eligibilityForm.evidenceReference = ''
-    await loadEligibility()
   } catch (error) { errorMessage.value = friendlyError(error) }
   finally { saving.value = false }
 }
@@ -405,7 +357,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
       <nav class="personnel-tabs" aria-label="人员管理功能">
         <button v-for="tab in [
           { id: 'students', label: '学生账号' }, { id: 'teachers', label: '导师账号' },
-          { id: 'majors', label: '专业目录' }, { id: 'eligibility', label: '学生资格' }, { id: 'imports', label: '名单导入' },
+          { id: 'majors', label: '专业目录' }, { id: 'eligibility', label: '年度资格' }, { id: 'imports', label: '名单导入' },
         ]" :key="tab.id" type="button" :aria-current="activeTab === tab.id ? 'page' : undefined"
           :class="{ 'personnel-tab-active': activeTab === tab.id }" :disabled="cohortBusy" @click="activeTab = tab.id as Tab; resetMessages()">
           {{ tab.label }}
@@ -468,28 +420,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
       </div>
 
       <div v-else-if="activeTab === 'eligibility'" class="personnel-section">
-        <StudentCohortEligibilityPanel v-if="collegeId !== null" :college-id="collegeId" :years="years" @busy="cohortBusy = $event" @changed="loadEligibility" />
-        <fieldset :disabled="cohortBusy" class="student-eligibility-adjustment"><h4>单个学生资格调整</h4>
-        <p class="personnel-help">每人每学年仅保留一条当前状态。再次修改会新增历史版本，原记录会带上失效时间。</p>
-        <div class="personnel-form">
-          <label>学年<select v-model.number="eligibilityYearId"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>
-          <p>仅用于学生；导师资格请到“批次与导师名额”设置。</p>
-          <label>学号<input v-model="eligibilityIdentifier" placeholder="输入完整学号" /></label>
-          <button class="personnel-secondary lookup-button" type="button" :disabled="loading" @click="lookupEligibilityPerson">{{ loading ? '查询中…' : '查找学生' }}</button>
-          <label>资格状态<select v-model="eligibilityForm.status"><option value="ELIGIBLE">具备资格</option><option value="INELIGIBLE">不具备资格</option></select></label>
-          <label>资格依据类型<input v-model="eligibilityForm.evidenceType" maxlength="32" placeholder="例如 ROSTER_IMPORT" required /></label>
-          <label class="wide-field">资格依据说明<textarea v-model="eligibilityForm.evidenceReference" rows="2" placeholder="审批编号或名单来源说明" /></label>
-        </div>
-        <div v-if="foundPerson" class="found-person">
-          <span>已找到 {{ foundPerson.fullName }}（{{ foundPerson.identifier }}）</span>
-          <button class="personnel-primary" type="button" :disabled="saving || eligibilityYearId === null" @click="saveEligibility">{{ saving ? '正在保存…' : '保存资格版本' }}</button>
-        </div>
-        <div class="eligibility-toolbar"><label class="history-toggle"><input v-model="showEligibilityHistory" type="checkbox" @change="loadEligibility" />显示历史版本</label><button class="personnel-secondary" type="button" :disabled="loading || eligibilityYearId === null" @click="loadEligibility">查询资格记录</button></div>
-        <div class="personnel-table-wrap"><table><thead><tr><th>学年</th><th>人员</th><th>编号</th><th>资格</th><th>依据</th><th>生效区间</th></tr></thead><tbody>
-          <tr v-for="row in eligibilityRows" :key="row.id"><td>{{ row.yearCode }}</td><td>{{ row.personName }} · {{ row.personType === 'STUDENT' ? '学生' : '导师' }}</td><td>{{ row.personIdentifier }}</td><td>{{ row.status === 'ELIGIBLE' ? '具备资格' : '不具备资格' }}</td><td>{{ row.evidenceType }}<small v-if="row.evidenceReference">{{ row.evidenceReference }}</small></td><td>{{ row.validFrom ?? '—' }}<br/><small>{{ row.validTo ? `至 ${row.validTo}` : '当前有效' }}</small></td></tr>
-          <tr v-if="!eligibilityRows.length"><td colspan="6" class="table-empty">当前筛选条件下没有资格记录。</td></tr>
-        </tbody></table></div>
-        </fieldset>
+        <StudentCohortEligibilityPanel v-if="collegeId !== null" :college-id="collegeId" :college-name="selectedCollegeName" :years="years" @busy="cohortBusy = $event" />
       </div>
 
       <div v-else class="personnel-section">
@@ -540,12 +471,19 @@ const PersonTable = defineComponent({
     loading: { type: Boolean, default: false },
   },
   setup(props) {
-    return () => h('div', { class: 'personnel-table-wrap' }, [
-      h('table', [
+    return () => h('div', { class: ['personnel-table-wrap', `personnel-table-${props.kind.toLowerCase()}`] }, [
+      h('table', { class: 'personnel-data-table' }, [
         h('thead', [h('tr', [h('th', props.kind === 'STUDENT' ? '学号' : '工号'), h('th', '姓名'), h('th', '登录标识'), ...(props.kind === 'STUDENT' ? [h('th', '专业与学位')] : [h('th', '资料状态')])])]),
         h('tbody', props.items.length ? props.items.map((person) => h('tr', { key: person.id }, [
-          h('td', person.identifier), h('td', person.fullName), h('td', person.loginIdentifier),
-          h('td', props.kind === 'STUDENT' ? `${person.majorName ?? ''} · ${person.degreeType === 'ACADEMIC_MASTER' ? '学硕' : '专硕'}` : person.profileReviewStatus ?? '未完善'),
+          h('td', { class: 'person-cell person-identifier', 'data-label': props.kind === 'STUDENT' ? '学号' : '工号' }, person.identifier),
+          h('td', { class: 'person-cell person-name', 'data-label': '姓名' }, person.fullName),
+          h('td', { class: 'person-cell person-login', 'data-label': '登录标识' }, [h('code', person.loginIdentifier)]),
+          h('td', { class: 'person-cell person-detail', 'data-label': props.kind === 'STUDENT' ? '专业与学位' : '资料状态' }, props.kind === 'STUDENT'
+            ? h('div', { class: 'person-major' }, [
+              h('span', { class: 'person-major-name' }, person.majorName ?? '未设置专业'),
+              h('span', { class: 'person-degree' }, person.degreeType === 'ACADEMIC_MASTER' ? '学硕' : person.degreeType === 'PROFESSIONAL_MASTER' ? '专硕' : '未设置'),
+            ])
+            : h('span', { class: 'person-status' }, person.profileReviewStatus ?? '未完善')),
         ])) : [h('tr', [h('td', { colspan: 4, class: 'table-empty' }, props.loading ? '正在读取…' : '暂时没有符合条件的人员记录。')])]),
       ]),
     ])
@@ -556,7 +494,6 @@ export default { components: { CredentialNotice, PersonTable } }
 </script>
 
 <style scoped>
-.student-eligibility-adjustment { border: 0; padding: 0; margin: 0; min-width: 0; }
 .personnel-panel { margin-top: 0; padding: 0 0 4px; color: var(--hnust-ink); }
 .personnel-heading { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; padding-bottom:14px; border-bottom:1px solid var(--hnust-line); }
 .personnel-kicker { display:inline-flex; align-items:center; gap:7px; margin:0 0 7px; padding:4px 8px; border:1px solid #cfe0e6; border-radius:999px; background:#eaf2f5; color:var(--hnust-blue-dark); font-size:10px; font-weight:700; }
@@ -588,13 +525,30 @@ export default { components: { CredentialNotice, PersonTable } }
 .personnel-pagination > div { display:flex; gap:7px; }
 .personnel-pagination .personnel-secondary { min-height:32px; }
 .personnel-list-heading input,.import-lookup input { width:190px; }
-.personnel-table-wrap { width:100%; overflow-x:auto; border:1px solid var(--hnust-line); border-radius:5px; background:#fff; }
-.personnel-table-wrap table { width:100%; border-collapse:collapse; text-align:left; font-size:11px; }
-.personnel-table-wrap th { padding:11px 9px; border-bottom:1px solid #dce7ea; background:#eaf2f5; color:#526d78; font-size:10px; font-weight:700; white-space:nowrap; }
-.personnel-table-wrap td { padding:11px 9px; border-top:1px solid #e7eceb; color:#405862; vertical-align:top; }
-.personnel-table-wrap tbody tr:hover { background:#f2f7f8; }
-.personnel-table-wrap td small { display:block; max-width:260px; margin-top:4px; color:var(--hnust-faint); white-space:normal; }
-.table-empty { padding:20px!important; color:var(--hnust-faint)!important; text-align:center; }
+.personnel-table-wrap { width:100%; overflow-x:auto; border:1px solid var(--hnust-line); border-radius:10px; background:#fff; box-shadow:0 5px 16px rgba(31,91,119,.045); }
+.personnel-table-wrap :deep(table:not(.personnel-data-table)) { width:100%; border-collapse:collapse; text-align:left; font-size:11px; }
+.personnel-table-wrap :deep(table:not(.personnel-data-table) th) { padding:11px 9px; border-bottom:1px solid #dce7ea; background:#eaf2f5; color:#526d78; font-size:10px; font-weight:700; white-space:nowrap; }
+.personnel-table-wrap :deep(table:not(.personnel-data-table) td) { padding:11px 9px; border-top:1px solid #e7eceb; color:#405862; vertical-align:top; }
+.personnel-table-wrap :deep(.personnel-data-table) { width:100%; min-width:650px; table-layout:fixed; border-collapse:collapse; text-align:left; font-size:12px; }
+.personnel-table-students :deep(th:nth-child(1)),.personnel-table-students :deep(td:nth-child(1)) { width:17%; }
+.personnel-table-students :deep(th:nth-child(2)),.personnel-table-students :deep(td:nth-child(2)) { width:15%; }
+.personnel-table-students :deep(th:nth-child(3)),.personnel-table-students :deep(td:nth-child(3)) { width:22%; }
+.personnel-table-students :deep(th:nth-child(4)),.personnel-table-students :deep(td:nth-child(4)) { width:46%; }
+.personnel-table-teachers :deep(th:nth-child(1)),.personnel-table-teachers :deep(td:nth-child(1)) { width:18%; }
+.personnel-table-teachers :deep(th:nth-child(2)),.personnel-table-teachers :deep(td:nth-child(2)) { width:18%; }
+.personnel-table-teachers :deep(th:nth-child(3)),.personnel-table-teachers :deep(td:nth-child(3)) { width:27%; }
+.personnel-table-teachers :deep(th:nth-child(4)),.personnel-table-teachers :deep(td:nth-child(4)) { width:37%; }
+.personnel-table-wrap :deep(.personnel-data-table th) { padding:13px 16px; border-bottom:1px solid #d7e7ee; background:#edf7fb; color:var(--hnust-blue-deep); font-size:11px; font-weight:700; white-space:nowrap; }
+.personnel-table-wrap :deep(.personnel-data-table td) { padding:15px 16px; border-top:1px solid #e8f0f4; color:var(--hnust-ink); vertical-align:middle; overflow-wrap:anywhere; }
+.personnel-table-wrap :deep(.personnel-data-table tbody tr:nth-child(even)) { background:#fbfdfe; }
+.personnel-table-wrap :deep(.personnel-data-table tbody tr:hover) { background:#f1f8fb; }
+.personnel-table-wrap :deep(.person-identifier) { color:var(--hnust-muted); font-variant-numeric:tabular-nums; }
+.personnel-table-wrap :deep(.person-name) { color:var(--hnust-blue-deep); font-size:13px; font-weight:700; }
+.personnel-table-wrap :deep(.person-login code) { display:inline-flex; width:fit-content; max-width:100%; padding:4px 8px; border:1px solid #e0edf3; border-radius:6px; background:#f5fafc; color:#456678; font-family:inherit; font-size:11px; overflow-wrap:anywhere; }
+.personnel-table-wrap :deep(.person-major) { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+.personnel-table-wrap :deep(.person-major-name) { color:#405f70; }
+.personnel-table-wrap :deep(.person-degree),.personnel-table-wrap :deep(.person-status) { display:inline-flex; width:fit-content; align-items:center; padding:4px 8px; border:1px solid #d7eaf3; border-radius:999px; background:#eef8fc; color:var(--hnust-blue-dark); font-size:10px; font-weight:650; white-space:nowrap; }
+.personnel-table-wrap :deep(.table-empty) { padding:20px!important; color:var(--hnust-faint)!important; text-align:center; }
 .table-actions { display:flex; gap:9px; white-space:nowrap; }
 .personnel-link { padding:0; border:0; background:transparent; color:var(--hnust-blue-dark); cursor:pointer; font-size:11px; }
 .credential-notice { display:grid; gap:7px; margin:15px 0 22px; padding:14px; border-left:3px solid #789886; background:#edf3ef; color:#496756; font-size:11px; }
@@ -604,13 +558,26 @@ export default { components: { CredentialNotice, PersonTable } }
 .personnel-error { border-left:3px solid #ba8585; background:#f4ebeb; color:#805959; }
 .personnel-success { border-left:3px solid #81a58f; background:#eaf2ed; color:#4f705e; }
 .personnel-empty { padding:20px; border:1px dashed #cadde4; border-radius:4px; background:#edf3f5; color:var(--hnust-muted); font-size:12px; }
-.found-person,.eligibility-toolbar,.import-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; padding:10px 12px; border-left:3px solid var(--hnust-blue); border-radius:4px; background:#eaf2f5; color:#4e6873; font-size:11px; }
-.lookup-button { align-self:end; }
-.history-toggle { display:flex; align-items:center; gap:7px; color:var(--hnust-muted); font-size:11px; }
-.history-toggle input { accent-color:var(--hnust-blue-dark); }
+.import-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; padding:10px 12px; border-left:3px solid var(--hnust-blue); border-radius:4px; background:#eaf2f5; color:#4e6873; font-size:11px; }
 .import-lookup { justify-content:flex-start; margin:18px 0; }
 .credential-cell { max-width:240px; color:#4f705e!important; font-family:ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
-@media(max-width:720px) { .personnel-heading { align-items:stretch; flex-direction:column; } .college-picker { min-width:0; } .personnel-form { grid-template-columns:1fr; } .personnel-form .wide-field { grid-column:auto; } .personnel-list-heading { align-items:stretch; flex-direction:column; } .personnel-list-heading input { width:100%; } .personnel-pagination { align-items:flex-start; flex-direction:column; } }
+@media(max-width:720px) {
+  .personnel-heading { align-items:stretch; flex-direction:column; }
+  .college-picker { min-width:0; }
+  .personnel-form { grid-template-columns:1fr; }
+  .personnel-form .wide-field { grid-column:auto; }
+  .personnel-list-heading { align-items:stretch; flex-direction:column; }
+  .personnel-list-heading input { width:100%; }
+  .personnel-pagination { align-items:flex-start; flex-direction:column; }
+  .personnel-table-wrap { overflow:visible; border:0; background:transparent; box-shadow:none; }
+  .personnel-table-wrap :deep(.personnel-data-table),.personnel-table-wrap :deep(.personnel-data-table tbody) { display:grid; min-width:0; gap:10px; }
+  .personnel-table-wrap :deep(.personnel-data-table thead) { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+  .personnel-table-wrap :deep(.personnel-data-table tr) { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 16px; padding:7px 14px; border:1px solid var(--hnust-line); border-radius:10px; background:#fff; box-shadow:0 3px 10px rgba(31,91,119,.035); }
+  .personnel-table-wrap :deep(.personnel-data-table td) { display:flex; min-width:0; flex-direction:column; align-items:flex-start; gap:5px; padding:9px 0; border:0; background:transparent; white-space:normal; }
+  .personnel-table-wrap :deep(.personnel-data-table td::before) { color:var(--hnust-muted); content:attr(data-label); font-size:10px; font-weight:650; }
+  .personnel-table-wrap :deep(.personnel-data-table .table-empty) { display:block; grid-column:1/-1; padding:14px!important; }
+  .personnel-table-wrap :deep(.personnel-data-table .table-empty::before) { content:none; }
+}
 </style>
 
 

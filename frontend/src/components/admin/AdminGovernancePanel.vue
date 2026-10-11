@@ -240,8 +240,8 @@ onMounted(() => {
       <div v-if="!profiles.length" class="governance-empty">当前学院没有待审核资料。</div>
       <article v-for="item in profiles" :key="item.versionId" class="governance-card">
         <div class="governance-card-title"><div><strong>{{ item.fullName }}</strong><span>{{ item.employeeNo }} · {{ item.collegeName }} · 版本 {{ item.versionNo }}</span></div><small>{{ new Date(item.submittedAt).toLocaleString('zh-CN') }}</small></div>
-        <div class="governance-profile"><small>研究方向</small><p>{{ item.researchDirections }}</p><small>个人简介</small><p>{{ item.biography }}</p></div>
-        <details v-if="item.currentPublishedVersionNo"><summary>当前公开版本 {{ item.currentPublishedVersionNo }}</summary><p>{{ item.currentPublishedResearchDirections }}</p><p>{{ item.currentPublishedBiography }}</p></details>
+        <div class="governance-profile"><div v-if="item.avatarUrl" class="governance-avatar-review"><small>本次提交头像</small><img :src="item.avatarUrl" :alt="item.fullName + '提交头像'" /></div><small>研究方向</small><p>{{ item.researchDirections || '未填写' }}</p><small>个人简介</small><p>{{ item.biography || '未填写' }}</p><small>学习经历</small><p>{{ item.educationExperience || '未填写' }}</p><small>工作经历</small><p>{{ item.workExperience || '未填写' }}</p><small>承担课程</small><p>{{ item.courses || '未填写' }}</p><small>科研与成果</small><p>{{ item.researchAndAchievements || '未填写' }}</p></div>
+        <details v-if="item.currentPublishedVersionNo"><summary>当前公开版本 {{ item.currentPublishedVersionNo }}</summary><div v-if="item.currentPublishedAvatarUrl" class="governance-avatar-review"><small>当前公开头像</small><img :src="item.currentPublishedAvatarUrl" :alt="item.fullName + '当前公开头像'" /></div><p>研究方向：{{ item.currentPublishedResearchDirections || '未填写' }}</p><p>个人简介：{{ item.currentPublishedBiography || '未填写' }}</p><p>学习经历：{{ item.currentPublishedEducationExperience || '未填写' }}</p><p>工作经历：{{ item.currentPublishedWorkExperience || '未填写' }}</p><p>承担课程：{{ item.currentPublishedCourses || '未填写' }}</p><p>科研与成果：{{ item.currentPublishedResearchAndAchievements || '未填写' }}</p></details>
         <div class="governance-actions"><button type="button" class="danger" :disabled="saving" @click="reviewProfile(item, 'REJECT')">驳回并填写意见</button><button type="button" class="primary" :disabled="saving" @click="reviewProfile(item, 'APPROVE')">审核通过并发布</button></div>
       </article>
     </div>
@@ -306,6 +306,7 @@ onMounted(() => {
 .governance-comparison div { display:grid; gap:5px; }.governance-comparison small,.governance-profile small { color:#8492a0; font-size:.69rem; }.governance-comparison strong { color:#425a70; font-size:.8rem; }.governance-comparison>b { color:#91a1af; }
 .governance-explanation,.governance-profile p,.governance-card details p { margin:10px 0 0; color:#596d80; font-size:.8rem; line-height:1.6; white-space:pre-wrap; }
 .governance-profile { padding:11px 12px; border-radius:6px; background:#f5f8fa; }.governance-profile p { margin:4px 0 10px; }
+.governance-avatar-review { display:grid; justify-items:start; gap:7px; margin-bottom:12px; }.governance-avatar-review img { width:88px; height:88px; object-fit:cover; border:1px solid #dce5ea; border-radius:50%; background:#fff; }
 .governance-card details { margin-top:11px; padding:10px 12px; border:1px solid #e3e9ee; border-radius:6px; color:#60768a; font-size:.75rem; }
 .governance-actions { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:13px; }
 .relation-controls select { min-height:35px; max-width:220px; border:1px solid #cbd6df; border-radius:6px; padding:6px 9px; color:#36536b; background:#fff; font:inherit; font-size:.76rem; }

@@ -1,4 +1,5 @@
 import type { ApiResult } from '../types/api'
+import { announceAppError } from '../utils/errorAnnouncer'
 
 // 默认走同源 /api，由 Vite 开发代理转发；部署时也可用环境变量指定 API 根路径。
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -17,6 +18,28 @@ export class ApiError extends Error {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+function shouldAnnounceApiFailure(error: ApiError, path: string): boolean {
+  const route = path.split(/[?#]/, 1)[0]
+
+  // 用户可直接处理的 4xx 留在当前页面提示，避免校验、权限和状态冲突都挤到全局播报。
+  // 网络/代理/服务端故障，以及登录后的会话失效，才需要跨页面提醒。
+  if (error.code === 'NETWORK_ERROR' || error.code === 'INVALID_RESPONSE' || error.status === 0 || error.status >= 500) {
+    return true
+  }
+  return error.status === 401 && route !== '/auth/login' && route !== '/auth/me'
+}
+
+function announceApiFailure(error: ApiError, path: string): void {
+  if (!shouldAnnounceApiFailure(error, path)) return
+  announceAppError({
+    source: 'api',
+    code: error.code,
+    status: error.status,
+    message: error.message,
+    path: path.split(/[?#]/, 1)[0],
+  })
 }
 
 function readCookie(name: string): string | undefined {
@@ -70,13 +93,27 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   } catch (error) {
     // 网络断开、代理无法连接后端时，浏览器只会提供通用的 “Failed to fetch” 信息。
     if (error instanceof TypeError) {
-      throw new ApiError('NETWORK_ERROR', '无法连接服务，请确认前端代理和后端服务已启动。', 0, null)
+      const apiError = new ApiError('NETWORK_ERROR', '无法连接服务，请确认网络、前端代理和后端服务状态。', 0, null)
+      announceApiFailure(apiError, path)
+      throw apiError
     }
     throw error
   }
   // 先读取文本，才能区分空响应、无效 JSON 和有效的 API 错误信封；直接调用 response.json()
   // 会把空响应变成浏览器原生异常，页面只能显示难以理解的 “Unexpected end of JSON input”。
-  const responseText = await response.text()
+  let responseText: string
+  try {
+    responseText = await response.text()
+  } catch (error) {
+    // fetch 可能已经收到响应头、但在读取响应正文时连接中断；写请求此时可能已经提交。
+    // 统一转换为 API 异常，让调用页面可以按当前服务端状态核对操作结果。
+    if (error instanceof TypeError) {
+      const apiError = new ApiError('NETWORK_ERROR', '读取服务响应时连接中断，请稍后重试。', 0, null)
+      announceApiFailure(apiError, path)
+      throw apiError
+    }
+    throw error
+  }
   let result: ApiResult<T>
   try {
     if (!responseText.trim()) throw new Error('empty response')
@@ -92,17 +129,22 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     result = parsed as ApiResult<T>
   } catch {
     // 代理错误页或后端启动失败时通常返回空内容、HTML 或不完整 JSON，不把原文透给用户。
-    throw new ApiError(
+    const apiError = new ApiError(
       'INVALID_RESPONSE',
       `服务端没有返回有效的 API 数据（HTTP ${response.status}）。请检查登录状态、后端服务和前端代理配置。`,
       response.status,
       null,
     )
+    announceApiFailure(apiError, path)
+    throw apiError
   }
 
   if (!response.ok) {
     // 不吞掉 HTTP 状态：页面根据业务 code 显示更具体的提示，未知 code 仍可显示后端 message。
-    throw new ApiError(result.code, result.message, response.status, result.data)
+    const apiError = new ApiError(result.code, result.message, response.status, result.data)
+    // 可预期的表单/业务错误由当前页面就地说明；全局播报只负责系统故障和会话失效。
+    announceApiFailure(apiError, path)
+    throw apiError
   }
 
   return result.data

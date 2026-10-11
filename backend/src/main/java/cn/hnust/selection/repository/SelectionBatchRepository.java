@@ -449,6 +449,15 @@ public class SelectionBatchRepository {
             "WHERE batch_id = ?", batchId);
     }
 
+    /** 撤回未启动发布时恢复草稿阶段状态；保留计划时间及其修订历史。 */
+    public void unpublishStages(Long batchId) {
+        jdbc.update("UPDATE batch_stage SET effective_start_at = NULL, effective_end_at = NULL, " +
+            "stage_status = IF(stage_code = 'SUPPLEMENT' AND planned_start_at IS NULL, 'NOT_SCHEDULED', 'NOT_STARTED'), " +
+            "row_version = row_version + 1 WHERE batch_id = ?", batchId);
+        jdbc.update("UPDATE supplement_window SET effective_start_at = NULL, effective_end_at = NULL, " +
+            "window_status = 'PLANNED', row_version = row_version + 1 WHERE batch_id = ?", batchId);
+    }
+
     public int countConfiguredQuotas(Long batchId) {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM batch_teacher_quota WHERE batch_id = ?",
             Integer.class, batchId);
@@ -843,16 +852,25 @@ public class SelectionBatchRepository {
             "WHERE participant.batch_id = ? AND application.application_status = 'IN_REVIEW'", actorId, batchId);
     }
 
-    /** 取消批次时对全部未匹配参与者记录批次取消来源；已有锁定关系与其名额不受影响。 */
+    /** 返回取消关系撤销后仍处于 MATCHED 的人数；非零表示关系事实与参与者状态不一致。 */
+    public int countMatchedParticipants(Long batchId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM batch_student WHERE batch_id = ? AND match_status = 'MATCHED'",
+            Integer.class, batchId);
+        return count == null ? 0 : count.intValue();
+    }
+
+    /** 取消批次时将全部未匹配参与者标记为批次取消来源；已匹配者须先撤销关系并释放名额。 */
     public void markUnmatchedByBatchCancellation(Long batchId, long operationId) {
         jdbc.update("INSERT INTO student_match_event(batch_student_id, old_status, new_status, reason_code, " +
             "source_type, source_id, occurred_at, business_operation_id) " +
             "SELECT id, match_status, 'UNMATCHED', 'BATCH_CANCELLED', 'BATCH_LIFECYCLE', ?, UTC_TIMESTAMP(3), ? " +
-            "FROM batch_student WHERE batch_id = ? AND (match_status IS NULL OR match_status <> 'MATCHED')",
+            "FROM batch_student WHERE batch_id = ? AND (match_status IS NULL OR match_status <> 'MATCHED') " +
+            "AND (match_reason IS NULL OR match_reason <> 'BATCH_CANCELLED')",
             batchId, operationId, batchId);
         jdbc.update("UPDATE batch_student SET match_status = 'UNMATCHED', match_reason = 'BATCH_CANCELLED', " +
             "match_changed_at = UTC_TIMESTAMP(3), row_version = row_version + 1 " +
-            "WHERE batch_id = ? AND (match_status IS NULL OR match_status <> 'MATCHED')", batchId);
+            "WHERE batch_id = ? AND (match_status IS NULL OR match_status <> 'MATCHED') " +
+            "AND (match_reason IS NULL OR match_reason <> 'BATCH_CANCELLED')", batchId);
     }
 
     /** 批次取消後關閉尚未結案階段及補選窗口；原排期與歷史階段不刪除。 */
@@ -890,6 +908,7 @@ public class SelectionBatchRepository {
                     ("ARCHIVE".equals(action) ? "archived_at" : ("UNARCHIVE".equals(action) ? "archived_at" : null))));
         String stamp = timestampField == null ? "" : ", " + timestampField + " = UTC_TIMESTAMP(3)";
         if ("UNARCHIVE".equals(action)) stamp = ", archived_at = NULL";
+        if ("UNPUBLISH".equals(action)) stamp = ", published_at = NULL";
         return jdbc.update("UPDATE selection_batch SET batch_status = ?, row_version = row_version + 1" + stamp +
             " WHERE id = ? AND batch_status = ?", newStatus, batchId, oldStatus);
     }

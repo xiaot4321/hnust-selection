@@ -9,4 +9,6 @@ public interface AdminRelationAdjustmentService {
     PageResult<AdminMatchingRelationVO> list(AccountPrincipal actor, Long batchId, int pageNo, int pageSize);
     AdminMatchingRelationVO adjust(AccountPrincipal actor, Long relationId, AdjustMatchingRelationRequest request,
         String ifMatch, String idempotencyKey);
+    /** Batch cancellation revokes every currently locked relation through the normal audited adjustment flow. */
+    int revokeLockedForBatchCancellation(AccountPrincipal actor, Long batchId, String reason);
 }

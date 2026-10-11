@@ -1,5 +1,7 @@
 package cn.hnust.selection.vo;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /** 导师本人资料页视图；不包含账号凭证或未公开的内部字段。 */
 public class TeacherProfileVO {
     private Long teacherId;
@@ -19,8 +21,15 @@ public class TeacherProfileVO {
     private String submittedWorkExperience;
     private String submittedCourses;
     private String submittedResearchAndAchievements;
+    private String publishedAvatarUrl;
+    private String submittedAvatarUrl;
+    private Long publishedAvatarFileId;
+    private Long submittedAvatarFileId;
+    private String publishedAvatarStorageKey;
+    private String submittedAvatarStorageKey;
     private Integer versionNo;
     private String etag;
+    private Long profileRowVersion;
 
     public Long getTeacherId() { return teacherId; }
     public void setTeacherId(Long teacherId) { this.teacherId = teacherId; }
@@ -56,8 +65,22 @@ public class TeacherProfileVO {
     public void setSubmittedCourses(String value) { this.submittedCourses = value; }
     public String getSubmittedResearchAndAchievements() { return submittedResearchAndAchievements; }
     public void setSubmittedResearchAndAchievements(String value) { this.submittedResearchAndAchievements = value; }
+    public String getPublishedAvatarUrl() { return publishedAvatarUrl; }
+    public void setPublishedAvatarUrl(String value) { this.publishedAvatarUrl = value; }
+    public String getSubmittedAvatarUrl() { return submittedAvatarUrl; }
+    public void setSubmittedAvatarUrl(String value) { this.submittedAvatarUrl = value; }
+    @JsonIgnore public Long getPublishedAvatarFileId() { return publishedAvatarFileId; }
+    public void setPublishedAvatarFileId(Long value) { this.publishedAvatarFileId = value; }
+    @JsonIgnore public Long getSubmittedAvatarFileId() { return submittedAvatarFileId; }
+    public void setSubmittedAvatarFileId(Long value) { this.submittedAvatarFileId = value; }
+    @JsonIgnore public String getPublishedAvatarStorageKey() { return publishedAvatarStorageKey; }
+    public void setPublishedAvatarStorageKey(String value) { this.publishedAvatarStorageKey = value; }
+    @JsonIgnore public String getSubmittedAvatarStorageKey() { return submittedAvatarStorageKey; }
+    public void setSubmittedAvatarStorageKey(String value) { this.submittedAvatarStorageKey = value; }
     public Integer getVersionNo() { return versionNo; }
     public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
     public String getEtag() { return etag; }
     public void setEtag(String etag) { this.etag = etag; }
+    @JsonIgnore public Long getProfileRowVersion() { return profileRowVersion; }
+    public void setProfileRowVersion(Long profileRowVersion) { this.profileRowVersion = profileRowVersion; }
 }

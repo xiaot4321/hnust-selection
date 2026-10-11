@@ -18,6 +18,7 @@ import cn.hnust.selection.vo.TeacherBulkDecisionAcceptedVO;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,7 +29,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.validation.Valid;
 import javax.validation.constraints.Max;
@@ -49,12 +52,23 @@ public class TeacherWorkspaceController {
         return ResponseEntity.ok().header(HttpHeaders.ETAG, profile.getEtag()).body(Result.success(profile));
     }
 
-    @PatchMapping("/profile")
+    @PatchMapping(value = "/profile", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Result<TeacherProfileVO>> updateProfile(
         @RequestHeader(value = "If-Match", required = false) String ifMatch,
         @Valid @RequestBody UpdateTeacherProfileRequest request,
         @AuthenticationPrincipal AccountPrincipal actor) {
         TeacherProfileVO profile = service.updateProfile(actor, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, profile.getEtag()).body(Result.success(profile));
+    }
+
+    @PatchMapping(value = "/profile", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Result<TeacherProfileVO>> updateProfileWithAvatar(
+        @RequestHeader(value = "If-Match", required = false) String ifMatch,
+        @Valid @RequestPart("profile") UpdateTeacherProfileRequest request,
+        @RequestPart(value = "avatar", required = false) MultipartFile avatar,
+        @RequestParam(value = "clearAvatar", defaultValue = "false") boolean clearAvatar,
+        @AuthenticationPrincipal AccountPrincipal actor) {
+        TeacherProfileVO profile = service.updateProfileWithAvatar(actor, ifMatch, request, avatar, clearAvatar);
         return ResponseEntity.ok().header(HttpHeaders.ETAG, profile.getEtag()).body(Result.success(profile));
     }
 

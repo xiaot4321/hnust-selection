@@ -251,13 +251,15 @@ public class StudentIdentityCorrectionRepository {
     }
 
     public List<IdentityBatchImpact> lockBatchImpacts(Long studentId) {
+        // 取消批次只保留历史记录，不再参与身份更正的开窗影响校验或变更处理。
         String sql = "SELECT participant.id AS batch_student_id, batch.id AS batch_id, batch.academic_year_id, " +
             "batch.batch_status, batch.supplement_planned, participant.match_status, participant.current_relation_id, " +
             "filling.actual_started_at, window.window_status " +
             "FROM batch_student participant JOIN selection_batch batch ON batch.id = participant.batch_id " +
             "JOIN batch_stage filling ON filling.batch_id = batch.id AND filling.stage_code = 'FILLING' " +
             "LEFT JOIN supplement_window window ON window.batch_id = batch.id " +
-            "WHERE participant.student_id = ? ORDER BY batch.id FOR UPDATE";
+            "WHERE participant.student_id = ? AND batch.batch_status <> 'CANCELLED' " +
+            "ORDER BY batch.id FOR UPDATE";
         return jdbcTemplate.query(sql, (rs, row) -> {
             long relationId = rs.getLong("current_relation_id");
             boolean relationMissing = rs.wasNull();

@@ -8,6 +8,7 @@ import cn.hnust.selection.repository.AdminTeacherProfileReviewRepository.ReviewT
 import cn.hnust.selection.request.ReviewTeacherProfileRequest;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AdminTeacherProfileReviewService;
+import cn.hnust.selection.service.PrivateFileStorage;
 import cn.hnust.selection.service.PersonnelAccessService;
 import cn.hnust.selection.vo.AdminTeacherProfileVersionVO;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
@@ -30,10 +32,12 @@ public class AdminTeacherProfileReviewServiceImpl implements AdminTeacherProfile
     private final AdminTeacherProfileReviewRepository repository;
     private final PersonnelAccessService accessService;
     private final ObjectMapper objectMapper;
+    private final PrivateFileStorage fileStorage;
 
     public AdminTeacherProfileReviewServiceImpl(AdminTeacherProfileReviewRepository repository,
-        PersonnelAccessService accessService, ObjectMapper objectMapper) {
+        PersonnelAccessService accessService, ObjectMapper objectMapper, PrivateFileStorage fileStorage) {
         this.repository = repository; this.accessService = accessService; this.objectMapper = objectMapper;
+        this.fileStorage = fileStorage;
     }
 
     @Override
@@ -43,6 +47,7 @@ public class AdminTeacherProfileReviewServiceImpl implements AdminTeacherProfile
         validatePage(pageNo, pageSize);
         accessService.requireCollege(actor, collegeId);
         List<AdminTeacherProfileVersionVO> rows = repository.listPending(collegeId, pageNo, pageSize);
+        for (AdminTeacherProfileVersionVO row : rows) withAvatarUrls(row);
         return new PageResult<AdminTeacherProfileVersionVO>(rows, repository.countPending(collegeId), pageNo, pageSize);
     }
 
@@ -52,7 +57,7 @@ public class AdminTeacherProfileReviewServiceImpl implements AdminTeacherProfile
         if (versionId == null || versionId.longValue() <= 0L) throw invalid("资料版本 ID 无效");
         AdminTeacherProfileVersionVO view = repository.findView(versionId).orElseThrow(() -> notFound("导师资料版本不存在"));
         accessService.requireCollege(actor, view.getCollegeId());
-        return view;
+        return withAvatarUrls(view);
     }
 
     @Override
@@ -83,7 +88,7 @@ public class AdminTeacherProfileReviewServiceImpl implements AdminTeacherProfile
             if (!"OK".equals(operation.resultCode) || operation.objectId == null) {
                 throw new ApiException("REQUEST_IN_PROGRESS", "相同审核仍在处理中", HttpStatus.CONFLICT);
             }
-            return repository.findView(operation.objectId).orElseThrow(() -> new IllegalStateException("审核结果无法读取"));
+            return withAvatarUrls(repository.findView(operation.objectId).orElseThrow(() -> new IllegalStateException("审核结果无法读取")));
         }
         if (!"PENDING_REVIEW".equals(target.status)) throw new ApiException("STATE_CONFLICT", "该资料版本已审核", HttpStatus.CONFLICT);
         Long operationId = repository.insertOperation(current.getAccountId(), target.collegeId, key, fingerprint);
@@ -94,7 +99,19 @@ public class AdminTeacherProfileReviewServiceImpl implements AdminTeacherProfile
         repository.insertAudit(operationId, current.getAccountId(), target.collegeId, versionId,
             "{\"reviewStatus\":\"PENDING_REVIEW\",\"rowVersion\":" + target.rowVersion + "}", after, comment);
         repository.completeOperation(operationId);
-        return repository.findView(versionId).orElseThrow(() -> new IllegalStateException("审核后资料版本无法读取"));
+        return withAvatarUrls(repository.findView(versionId).orElseThrow(() -> new IllegalStateException("审核后资料版本无法读取")));
+    }
+
+    private AdminTeacherProfileVersionVO withAvatarUrls(AdminTeacherProfileVersionVO profile) {
+        try {
+            if (profile.getAvatarStorageKey() != null) profile.setAvatarUrl(fileStorage.temporaryReadUrl(profile.getAvatarStorageKey()));
+            if (profile.getCurrentPublishedAvatarStorageKey() != null) {
+                profile.setCurrentPublishedAvatarUrl(fileStorage.temporaryReadUrl(profile.getCurrentPublishedAvatarStorageKey()));
+            }
+            return profile;
+        } catch (IOException ex) {
+            throw new ApiException("INTERNAL_ERROR", "暂时无法读取导师头像", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     private String fingerprint(Long versionId, String decision, String comment, String etag) {

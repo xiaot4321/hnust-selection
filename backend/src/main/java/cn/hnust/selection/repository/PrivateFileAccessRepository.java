@@ -26,9 +26,10 @@ public class PrivateFileAccessRepository {
         } else {
             return null;
         }
+        // PENDING is accepted only for legacy resumes created by the removed placeholder scan state.
         String sql = "SELECT file.id, file.owner_account_id, file.purpose_code, file.original_filename, file.media_type, " +
             "file.storage_key, file.file_status, file.file_size_bytes FROM managed_file file WHERE file.id = ? " +
-            "AND file.purpose_code = 'STUDENT_RESUME' AND file.file_status = 'AVAILABLE' AND (" + authorization + ")";
+            "AND file.purpose_code = 'STUDENT_RESUME' AND file.file_status IN ('AVAILABLE', 'PENDING') AND (" + authorization + ")";
         List<FileMetadata> rows;
         if (role == AccountRole.STUDENT) rows = jdbc.query(sql, (rs, n) -> new FileMetadata(rs.getLong("id"),
             rs.getLong("owner_account_id"), rs.getString("purpose_code"), rs.getString("original_filename"),

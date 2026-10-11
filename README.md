@@ -29,6 +29,8 @@ mvn -f backend/pom.xml spring-boot:run
 可通过 `DB_URL` 覆盖默认 JDBC 地址，通过 `SERVER_PORT` 修改后端端口。应用配置关闭了 Spring SQL 初始化，不会自动执行建库脚本。
 服务启动后可访问 `http://127.0.0.1:8080/actuator/health` 查看运行状态。
 
+学生简历上传使用北京区域的阿里云 OSS Bucket `hnust-selection`。启动后端前，在运行进程环境中设置 `OSS_ACCESS_KEY_ID` 和 `OSS_ACCESS_KEY_SECRET`；可选地用 `OSS_ENDPOINT`、`OSS_BUCKET` 覆盖默认端点和 Bucket。建议使用仅含 `oss:PutObject`、`oss:GetObject`、`oss:DeleteObject`、`oss:PutObjectAcl` 权限的 RAM 用户，并将 Bucket 设为私有。凭证不要写入仓库或发到聊天中。简历下载仍通过系统鉴权接口代理，不返回 OSS 公网地址。没有配置 OSS 凭证时，其他本地功能仍可启动，但简历上传会失败。
+
 首次初始化总管理员时，在 PowerShell 中运行 `backend/scripts/bootstrap-admin.ps1`。该脚本默认使用已确认的登录名 `admin` 和学院名称“计算机科学与工程学院”，通过非 Web 模式启动一次性初始化流程；学院代码未提供时会生成 `TMP-` 开头的随机临时代码并在终端显示。请在受控本机终端查看不设到期时间的一次性临时凭证并立即线下交付；首次登录必须设置正式密码。初始化会在一个数据库事务中写入账号、能力授权、凭证哈希和审计记录；若槽位已被占用，脚本会拒绝重复初始化。临时代码之后应按学院正式编码维护流程更正。
 
 ### 前端

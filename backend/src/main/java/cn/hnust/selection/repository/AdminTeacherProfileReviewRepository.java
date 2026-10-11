@@ -37,6 +37,12 @@ public class AdminTeacherProfileReviewRepository {
     }
 
     public Optional<ReviewTarget> lockTarget(Long versionId) {
+        List<Long> teacherIds = jdbc.query("SELECT teacher_id FROM teacher_public_profile_version WHERE id = ?",
+            (rs, n) -> Long.valueOf(rs.getLong(1)), versionId);
+        if (teacherIds.isEmpty()) return Optional.empty();
+        List<Long> lockedTeachers = jdbc.query("SELECT id FROM teacher WHERE id = ? FOR UPDATE",
+            (rs, n) -> Long.valueOf(rs.getLong(1)), teacherIds.get(0));
+        if (lockedTeachers.isEmpty()) return Optional.empty();
         String sql = "SELECT profile.id, profile.teacher_id, teacher.college_id, profile.version_no, profile.review_status, " +
             "profile.row_version, teacher.current_public_profile_version_id " +
             "FROM teacher_public_profile_version profile JOIN teacher teacher ON teacher.id = profile.teacher_id " +
@@ -112,10 +118,17 @@ public class AdminTeacherProfileReviewRepository {
             "published.research_directions AS published_directions, published.biography AS published_biography, " +
             "published.education_experience AS published_education_experience, published.work_experience AS published_work_experience, " +
             "published.courses AS published_courses, published.research_and_achievements AS published_research_and_achievements, " +
+            "submitted_avatar.storage_key AS avatar_storage_key, published_avatar.storage_key AS published_avatar_storage_key, " +
             "profile.row_version " +
             "FROM teacher_public_profile_version profile JOIN teacher teacher ON teacher.id = profile.teacher_id " +
             "JOIN college college ON college.id = teacher.college_id LEFT JOIN teacher_public_profile_version published " +
-            "ON published.id = teacher.current_public_profile_version_id AND published.published_at IS NOT NULL";
+            "ON published.id = teacher.current_public_profile_version_id AND published.published_at IS NOT NULL " +
+            "LEFT JOIN managed_file submitted_avatar ON submitted_avatar.id = profile.avatar_file_id " +
+            "AND submitted_avatar.owner_account_id = teacher.account_id AND submitted_avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' " +
+            "AND submitted_avatar.file_status = 'AVAILABLE' " +
+            "LEFT JOIN managed_file published_avatar ON published_avatar.id = published.avatar_file_id " +
+            "AND published_avatar.owner_account_id = teacher.account_id AND published_avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' " +
+            "AND published_avatar.file_status = 'AVAILABLE'";
     }
 
     private AdminTeacherProfileVersionVO mapView(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
@@ -138,6 +151,8 @@ public class AdminTeacherProfileReviewRepository {
         value.setCurrentPublishedWorkExperience(rs.getString("published_work_experience"));
         value.setCurrentPublishedCourses(rs.getString("published_courses"));
         value.setCurrentPublishedResearchAndAchievements(rs.getString("published_research_and_achievements"));
+        value.setAvatarStorageKey(rs.getString("avatar_storage_key"));
+        value.setCurrentPublishedAvatarStorageKey(rs.getString("published_avatar_storage_key"));
         long rowVersion = rs.getLong("row_version"); value.setRowVersion(Long.valueOf(rowVersion));
         value.setEtag(etag(value.getVersionId(), rowVersion));
         return value;

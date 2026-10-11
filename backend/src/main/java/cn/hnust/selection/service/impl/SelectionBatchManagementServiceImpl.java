@@ -20,6 +20,7 @@ import cn.hnust.selection.request.UpdateSelectionBatchRequest;
 import cn.hnust.selection.security.AccountAuthorization;
 import cn.hnust.selection.security.AccountPrincipal;
 import cn.hnust.selection.service.AccountAuthorizationService;
+import cn.hnust.selection.service.AdminRelationAdjustmentService;
 import cn.hnust.selection.service.SelectionBatchManagementService;
 import cn.hnust.selection.vo.AcademicYearOptionVO;
 import cn.hnust.selection.vo.BatchStageVO;
@@ -86,15 +87,18 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
     private final SelectionBatchRepository repository;
     private final AccountRepository accountRepository;
     private final AccountAuthorizationService authorizationService;
+    private final AdminRelationAdjustmentService relationAdjustmentService;
     private final ObjectMapper objectMapper;
     /** 定时开窗逐批次使用 REQUIRES_NEW，确保单批回滚不污染其他批次事务。 */
     private final TransactionTemplate transactionTemplate;
 
     public SelectionBatchManagementServiceImpl(SelectionBatchRepository repository,
         AccountRepository accountRepository, AccountAuthorizationService authorizationService,
-        ObjectMapper objectMapper, PlatformTransactionManager transactionManager) {
+        AdminRelationAdjustmentService relationAdjustmentService, ObjectMapper objectMapper,
+        PlatformTransactionManager transactionManager) {
         this.repository = repository; this.accountRepository = accountRepository;
-        this.authorizationService = authorizationService; this.objectMapper = objectMapper;
+        this.authorizationService = authorizationService; this.relationAdjustmentService = relationAdjustmentService;
+        this.objectMapper = objectMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -257,7 +261,7 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
         SelectionBatchEntity batch = lockBatch(batchId);
         AccountPrincipal current = requireBatchManager(actor, batch);
         requireVersion(batch.getRowVersion(), expectedVersion);
-        if (!Arrays.asList("DRAFT", "SCHEDULED", "ACTIVE").contains(batch.getStatus())) {
+        if (!Arrays.asList("DRAFT", "SCHEDULED", "ACTIVE", "PAUSED").contains(batch.getStatus())) {
             throw stateConflict("当前批次状态不允许修改排期");
         }
         String reason = trim(request.getReason());
@@ -271,7 +275,7 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
                 if (point.start.isBefore(now.toInstant())) throw invalidArgument("阶段开始时间不能早于当前时间");
             }
         }
-        if (!"DRAFT".equals(batch.getStatus())) validateScheduleChanges(oldStages, schedule, now);
+        if (!"DRAFT".equals(batch.getStatus())) validateScheduleChanges(oldStages, schedule, now, batch.getStatus());
         String before = scheduleSnapshot(oldStages);
         int revisionNo = (int) repository.nextScheduleRevision(batchId);
         for (String code : CORE_STAGES) {
@@ -350,6 +354,37 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
         repository.insertAudit(current.getAccountId(), ADMIN, ADMIN, scopeBasis(batch.getCollegeId(), batchId),
             "SELECTION_BATCH", batchId, "BATCH_PUBLISH", snapshot("status", "DRAFT"),
             snapshot("status", "SCHEDULED"), "批次发布", operationId);
+        repository.completeOperation(operationId);
+        return detail(batchId);
+    }
+
+    /** 撤回尚未启动的批次发布，使管理员可以修订排期后重新发布。 */
+    @Override
+    @Transactional
+    public SelectionBatchDetailVO unpublish(AccountPrincipal actor, Long batchId, String idempotencyKey) {
+        String key = requireIdempotencyKey(idempotencyKey);
+        AccountPrincipal current = lockAndRefresh(actor, ADMIN);
+        SelectionBatchEntity batch = lockBatch(batchId);
+        requireBatchManager(current, batch);
+        String fingerprint = fingerprint("UNPUBLISH", batchId);
+        if (replay(current.getAccountId(), "BATCH_UNPUBLISH", key, fingerprint).isPresent()) return detail(batchId);
+        if (!"SCHEDULED".equals(batch.getStatus())) throw stateConflict("只有尚未启动的已发布批次可以撤回发布");
+
+        long operationId = repository.insertOperation(current.getAccountId(), ADMIN, "BATCH_UNPUBLISH",
+            batch.getCollegeId(), batchId, key, fingerprint);
+        String reason = "管理员撤回批次发布";
+        if (repository.releaseRunningSlot(batchId) != 1) {
+            throw stateConflict("已发布批次运行槽位不存在，无法撤回发布");
+        }
+        repository.unpublishStages(batchId);
+        if (repository.updateBatchState(batchId, "SCHEDULED", "DRAFT", "UNPUBLISH") != 1) {
+            throw stateConflict("批次状态已变化，请刷新后重试");
+        }
+        repository.insertLifecycleEvent(batchId, "UNPUBLISH", "SCHEDULED", "DRAFT", null,
+            current.getAccountId(), ADMIN, reason, operationId);
+        repository.insertAudit(current.getAccountId(), ADMIN, ADMIN, scopeBasis(batch.getCollegeId(), batchId),
+            "SELECTION_BATCH", batchId, "BATCH_UNPUBLISH", snapshot("status", "SCHEDULED"),
+            snapshot("status", "DRAFT", "runningSlot", "RELEASED"), reason, operationId);
         repository.completeOperation(operationId);
         return detail(batchId);
     }
@@ -478,6 +513,11 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
 
         long operationId = repository.insertOperation(current.getAccountId(), ADMIN, "BATCH_CANCEL",
             batch.getCollegeId(), batchId, key, fingerprint);
+        String reason = "管理员取消批次";
+        int revokedRelations = relationAdjustmentService.revokeLockedForBatchCancellation(current, batchId, reason);
+        if (repository.countMatchedParticipants(batchId) > 0) {
+            throw stateConflict("批次中仍有未能撤销的锁定关系，取消操作已回滚");
+        }
         repository.cancelPendingApplications(batchId, current.getAccountId(), operationId);
         repository.markUnmatchedByBatchCancellation(batchId, operationId);
         repository.closeRemainingBatchStages(batchId);
@@ -485,12 +525,11 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
         if (repository.updateBatchState(batchId, oldStatus, "CANCELLED", "CANCEL") != 1) {
             throw stateConflict("批次状态已变化，请刷新后重试");
         }
-        String reason = "管理员取消批次";
         repository.insertLifecycleEvent(batchId, "CANCEL", oldStatus, "CANCELLED", repository.currentStageId(batchId),
             current.getAccountId(), ADMIN, reason, operationId);
         repository.insertAudit(current.getAccountId(), ADMIN, ADMIN, scopeBasis(batch.getCollegeId(), batchId),
-            "SELECTION_BATCH", batchId, "BATCH_CANCEL", snapshot("status", oldStatus),
-            snapshot("status", "CANCELLED"), reason, operationId);
+            "SELECTION_BATCH", batchId, "BATCH_CANCEL", snapshot("status", oldStatus, "lockedRelations", revokedRelations),
+            snapshot("status", "CANCELLED", "revokedRelations", revokedRelations, "relationHistory", "RETAINED"), reason, operationId);
         repository.completeOperation(operationId);
         return detail(batchId);
     }
@@ -1072,31 +1111,40 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
     /**
      * 对已发布批次限制排期变更窗口。
      *
-     * <p>整组请求中的历史/当前阶段必须保持原值，只有未开始阶段可调整；当前开放阶段保持原开始时间，
-     * 且只能在原截止时刻前延长结束时间，避免借排期接口重开已过期窗口。</p>
+     * <p>已关闭阶段必须保持原值。运行中当前开放阶段保持原开始时间，且仅可在原截止前延长结束时间；
+     * 暂停时当前开放阶段可把结束时间调整到未来。未开始阶段可调整，但不能把新开始时间设到当前时间之前。</p>
      */
-    private void validateScheduleChanges(List<BatchStageVO> oldStages, Map<String, SchedulePoint> schedule, Timestamp now) {
+    private void validateScheduleChanges(List<BatchStageVO> oldStages, Map<String, SchedulePoint> schedule,
+        Timestamp now, String batchStatus) {
         Map<String, BatchStageVO> oldByCode = new LinkedHashMap<String, BatchStageVO>();
         for (BatchStageVO stage : oldStages) oldByCode.put(stage.getStageCode(), stage);
         Instant nowInstant = now.toInstant();
         for (Map.Entry<String, SchedulePoint> entry : schedule.entrySet()) {
             BatchStageVO old = oldByCode.get(entry.getKey());
             if (old == null) throw stateConflict("批次阶段不存在");
+            SchedulePoint next = entry.getValue();
+            boolean unchanged = old.getPlannedStartAt().equals(next.start) && old.getPlannedEndAt().equals(next.end);
             if ("CLOSED".equals(old.getStatus())) {
-                if (!old.getPlannedStartAt().equals(entry.getValue().start) ||
-                    !old.getPlannedEndAt().equals(entry.getValue().end)) {
+                if (!unchanged) {
                     throw stateConflict("已关闭阶段不能修改排期");
                 }
                 continue;
             }
             if ("OPEN".equals(old.getStatus())) {
-                if (old.getPlannedStartAt().equals(entry.getValue().start) &&
-                    old.getPlannedEndAt().equals(entry.getValue().end)) continue;
-                if (!old.getPlannedStartAt().equals(entry.getValue().start) ||
-                    !entry.getValue().end.isAfter(old.getPlannedEndAt()) ||
-                    !old.getPlannedEndAt().isAfter(nowInstant)) {
-                    throw stateConflict("开放阶段只能在截止前延长结束时间");
+                if (unchanged) continue;
+                if (!old.getPlannedStartAt().equals(next.start)) {
+                    throw stateConflict("当前开放阶段的开始时间不能修改");
                 }
+                if ("PAUSED".equals(batchStatus)) {
+                    if (!next.end.isAfter(nowInstant)) throw stateConflict("暂停期间调整的当前阶段结束时间必须晚于当前时间");
+                } else if (!next.end.isAfter(old.getPlannedEndAt()) || !old.getPlannedEndAt().isAfter(nowInstant)) {
+                    throw stateConflict("运行中的当前阶段只能在原截止前延长结束时间");
+                }
+                continue;
+            }
+            if (("ACTIVE".equals(batchStatus) || "PAUSED".equals(batchStatus)) && !unchanged &&
+                next.start.isBefore(nowInstant)) {
+                throw stateConflict("未开始阶段的新开始时间不能早于当前时间");
             }
         }
     }

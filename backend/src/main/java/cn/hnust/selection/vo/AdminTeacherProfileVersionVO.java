@@ -1,5 +1,7 @@
 package cn.hnust.selection.vo;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /** 学院管理员审核导师公开资料版本的最小视图。 */
 public class AdminTeacherProfileVersionVO {
     private Long versionId;
@@ -26,6 +28,10 @@ public class AdminTeacherProfileVersionVO {
     private String currentPublishedResearchAndAchievements;
     private Long rowVersion;
     private String etag;
+    private String avatarUrl;
+    private String currentPublishedAvatarUrl;
+    private String avatarStorageKey;
+    private String currentPublishedAvatarStorageKey;
 
     public Long getVersionId() { return versionId; }
     public void setVersionId(Long value) { versionId = value; }
@@ -75,4 +81,12 @@ public class AdminTeacherProfileVersionVO {
     public void setRowVersion(Long value) { rowVersion = value; }
     public String getEtag() { return etag; }
     public void setEtag(String value) { etag = value; }
+    public String getAvatarUrl() { return avatarUrl; }
+    public void setAvatarUrl(String value) { avatarUrl = value; }
+    public String getCurrentPublishedAvatarUrl() { return currentPublishedAvatarUrl; }
+    public void setCurrentPublishedAvatarUrl(String value) { currentPublishedAvatarUrl = value; }
+    @JsonIgnore public String getAvatarStorageKey() { return avatarStorageKey; }
+    public void setAvatarStorageKey(String value) { avatarStorageKey = value; }
+    @JsonIgnore public String getCurrentPublishedAvatarStorageKey() { return currentPublishedAvatarStorageKey; }
+    public void setCurrentPublishedAvatarStorageKey(String value) { currentPublishedAvatarStorageKey = value; }
 }

@@ -41,6 +41,12 @@ app:
   # 导入源文件只放在 Web 根目录之外；部署时可通过环境变量改到受控的私有盘。
   private-storage:
     directory: ${PRIVATE_FILE_STORAGE:./var/private-files}
+  # 简历和导师头像写入 OSS 私有对象；浏览器只收到经服务端授权的短时签名头像地址。
+  oss:
+    endpoint: ${OSS_ENDPOINT:https://oss-cn-beijing.aliyuncs.com}
+    bucket: ${OSS_BUCKET:hnust-selection}
+    access-key-id: ${OSS_ACCESS_KEY_ID:}
+    access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
 
 management:
   endpoints:

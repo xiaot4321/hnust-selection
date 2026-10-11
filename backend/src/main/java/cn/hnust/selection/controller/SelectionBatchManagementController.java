@@ -100,7 +100,7 @@ public class SelectionBatchManagementController {
         return ResponseEntity.ok().eTag("batch-" + result.getBatch().getRowVersion()).body(Result.success(result));
     }
 
-    /** 完整替换阶段排期；服务端返回更新后的批次 ETag。 */
+    /** 完整替换阶段排期；发布后服务端按当前阶段状态限制修改范围，并返回更新后的批次 ETag。 */
     @PutMapping("/{batchId}/schedule")
     public ResponseEntity<Result<SelectionBatchDetailVO>> schedule(@PathVariable("batchId") @Positive Long batchId,
         @Valid @RequestBody BatchScheduleRequest request,
@@ -116,6 +116,15 @@ public class SelectionBatchManagementController {
         @RequestHeader("Idempotency-Key") String idempotencyKey,
         @AuthenticationPrincipal AccountPrincipal actor) {
         SelectionBatchDetailVO result = service.publish(actor, batchId, idempotencyKey);
+        return ResponseEntity.ok().eTag("batch-" + result.getBatch().getRowVersion()).body(Result.success(result));
+    }
+
+    /** 撤回尚未启动的发布；服务端释放运行槽位并记录生命周期与审计。 */
+    @PostMapping("/{batchId}/unpublish")
+    public ResponseEntity<Result<SelectionBatchDetailVO>> unpublish(@PathVariable("batchId") @Positive Long batchId,
+        @RequestHeader("Idempotency-Key") String idempotencyKey,
+        @AuthenticationPrincipal AccountPrincipal actor) {
+        SelectionBatchDetailVO result = service.unpublish(actor, batchId, idempotencyKey);
         return ResponseEntity.ok().eTag("batch-" + result.getBatch().getRowVersion()).body(Result.success(result));
     }
 
@@ -146,7 +155,7 @@ public class SelectionBatchManagementController {
         return ResponseEntity.ok().eTag("batch-" + result.getBatch().getRowVersion()).body(Result.success(result));
     }
 
-    /** 取消尚未结束的批次，保留关系历史并结案待处理申请。 */
+    /** 取消尚未结束的批次，撤销当前锁定关系、回退名额并保留历史记录。 */
     @PostMapping("/{batchId}/cancel")
     public ResponseEntity<Result<SelectionBatchDetailVO>> cancel(@PathVariable("batchId") @Positive Long batchId,
         @RequestHeader("Idempotency-Key") String idempotencyKey,
