@@ -62,7 +62,7 @@ export interface TeacherBatchSummary {
   batchName: string
   batchStatus: string
   currentStage: string | null
-  roundOpenings: Array<{ roundNo: number; opensAt: string | null }>
+  roundOpenings: Array<{ roundNo: number; opensAt: string | null; endsAt: string | null; status: string }>
   quotaLimit: number
   occupiedCount: number
   remainingCount: number

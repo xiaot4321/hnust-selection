@@ -28,7 +28,13 @@ public class TeacherBatchSummaryVO {
     public static class RoundOpening {
         private final int roundNo;
         private final String opensAt;
-        public RoundOpening(int roundNo, String opensAt) { this.roundNo = roundNo; this.opensAt = opensAt; }
+        private final String endsAt;
+        private final String status;
+        public RoundOpening(int roundNo, String opensAt, String endsAt, String status) {
+            this.roundNo = roundNo; this.opensAt = opensAt; this.endsAt = endsAt; this.status = status;
+        }
+        public String getEndsAt() { return endsAt; }
+        public String getStatus() { return status; }
         public int getRoundNo() { return roundNo; }
         public String getOpensAt() { return opensAt; }
     }
