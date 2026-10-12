@@ -594,6 +594,11 @@ public class TeacherWorkspaceRepository {
         }, teacherId, batchId);
         if (rows.isEmpty()) return Optional.empty();
         TeacherBatchSummaryVO summary = rows.get(0);
+        summary.setRoundOpenings(jdbc.query("SELECT stage_code, " +
+            "DATE_FORMAT(COALESCE(effective_start_at, planned_start_at), '%Y-%m-%dT%H:%i:%s.%fZ') AS opens_at " +
+            "FROM batch_stage WHERE batch_id = ? AND stage_code IN ('ROUND_1','ROUND_2','ROUND_3') ORDER BY stage_order",
+            (rs, n) -> new TeacherBatchSummaryVO.RoundOpening(
+                Integer.parseInt(rs.getString("stage_code").substring(6)), rs.getString("opens_at")), batchId));
         summary.setMatchedStudents(jdbc.query("SELECT relation.id AS relation_id, student.student_no, student.full_name, " +
             "major.name AS major_name, student.degree_type, relation.source_type, " +
             "DATE_FORMAT(relation.locked_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS locked_at " +

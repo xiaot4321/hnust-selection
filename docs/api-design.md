@@ -557,7 +557,7 @@ GET /api/me/notices 返回通用分页 items，每项包含 noticeId、title、c
 
 批量决定端点立即返回 `202`，回执包含 `operationId` 和 `status`。后台按静态授权时已确定的稳定顺序逐项处理；状态可为 `PROCESSING`、`COMPLETED` 或 `FAILED`。`GET /api/operations/{operationId}` 的导师批量结果含 `items`，每项含 `applicationId`、`executionOrder`、`itemResult`、`code`、`message`、`relationId`。权限不足或账号停用后，尚未处理的项目失败；已提交项目不回滚。
 
-批次汇总字段为 `batchId`、`batchName`、`batchStatus`、`currentStage`、`quotaLimit`、`occupiedCount`、`remainingCount` 和 `matchedStudents`。锁定关系项仅包含 `relationId`、`studentNo`、`fullName`、`majorName`、`degreeType`、`source`、`lockedAt`。申请消息请求字段为 `title`、`content`、`applicationReferences`；每个引用只包含 `applicationType`（`ROUND` 或 `SUPPLEMENT`）及 `applicationId`。收件人由服务端从当前导师与批次的申请记录解析，响应字段为 `noticeId`、`recipientCount`、`sentAt`。
+批次汇总字段为 `batchId`、`batchName`、`batchStatus`、`currentStage`、`quotaLimit`、`occupiedCount`、`remainingCount` 、`roundOpenings` 和 `matchedStudents`。`roundOpenings` 仅包含三轮的 `roundNo` 与 `opensAt`（UTC 时间或空值），优先使用实际开始时间，未生成实际时间时使用计划开始时间；仅返回本人有关联名额的批次排期。锁定关系项仅包含 `relationId`、`studentNo`、`fullName`、`majorName`、`degreeType`、`source`、`lockedAt`。申请消息请求字段为 `title`、`content`、`applicationReferences`；每个引用只包含 `applicationType`（`ROUND` 或 `SUPPLEMENT`）及 `applicationId`。收件人由服务端从当前导师与批次的申请记录解析，响应字段为 `noticeId`、`recipientCount`、`sentAt`。
 
 ## 6. 错误码目录（技术基线）
 
