@@ -1,5 +1,8 @@
 package cn.hnust.selection.controller;
 
+import cn.hnust.selection.vo.UnmatchedStudentVO;
+import cn.hnust.selection.common.PageResult;
+
 import cn.hnust.selection.common.Result;
 import cn.hnust.selection.exception.ApiException;
 import cn.hnust.selection.request.BatchScheduleRequest;
@@ -235,6 +238,25 @@ public class SelectionBatchManagementController {
         BatchTeacherQuotaVO result = service.setTeacherQuota(actor, batchId, teacherId, request,
             parseVersion(ifMatch, "quota"), idempotencyKey);
         return ResponseEntity.ok().eTag("quota-" + result.getRowVersion()).body(Result.success(result));
+    }
+
+    @GetMapping("/{batchId}/rounds/{roundNo}/unmatched-students")
+    public Result<PageResult<UnmatchedStudentVO>> unmatchedStudents(
+        @PathVariable("batchId") @Positive Long batchId, @PathVariable("roundNo") @Min(1) @Max(3) int roundNo,
+        @RequestParam(value = "pageNo", defaultValue = "1") @Min(1) int pageNo,
+        @AuthenticationPrincipal AccountPrincipal actor) {
+        return Result.success(service.unmatchedStudents(actor, batchId, roundNo, pageNo));
+    }
+
+    @GetMapping("/{batchId}/rounds/{roundNo}/unmatched-students/export")
+    public ResponseEntity<byte[]> exportUnmatchedStudents(
+        @PathVariable("batchId") @Positive Long batchId, @PathVariable("roundNo") @Min(1) @Max(3) int roundNo,
+        @AuthenticationPrincipal AccountPrincipal actor) {
+        return ResponseEntity.ok()
+            .contentType(org.springframework.http.MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+            .header("Content-Disposition", "attachment; filename=unmatched-students-round-" + roundNo + ".xlsx")
+            .header("Cache-Control", "private, no-store")
+            .body(service.exportUnmatchedStudents(actor, batchId, roundNo));
     }
 
     /**

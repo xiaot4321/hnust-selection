@@ -1,5 +1,7 @@
 package cn.hnust.selection.repository;
 
+import cn.hnust.selection.vo.UnmatchedStudentVO;
+
 import cn.hnust.selection.entity.SelectionBatchEntity;
 import cn.hnust.selection.entity.TeacherQuotaEntity;
 import cn.hnust.selection.entity.TeacherScopeVersionEntity;
@@ -761,6 +763,25 @@ public class SelectionBatchRepository {
     public void completeOperation(long operationId) {
         jdbc.update("UPDATE business_operation SET result_code = 'OK', completed_at = UTC_TIMESTAMP(3) " +
             "WHERE id = ? AND result_code = 'IN_PROGRESS'", operationId);
+    }
+
+    private static final String UNMATCHED_FROM = " FROM batch_student participant " +
+        "JOIN student ON student.id = participant.student_id " +
+        "JOIN selection_batch batch ON batch.id = participant.batch_id " +
+        "JOIN college ON college.id = batch.college_id JOIN major ON major.id = student.major_id " +
+        "WHERE participant.batch_id = ? AND (participant.match_status IS NULL OR participant.match_status <> 'MATCHED') ";
+
+    public long countUnmatchedStudents(Long batchId) {
+        Long count = jdbc.queryForObject("SELECT COUNT(*)" + UNMATCHED_FROM, Long.class, batchId);
+        return count == null ? 0L : count.longValue();
+    }
+
+    public List<UnmatchedStudentVO> listUnmatchedStudents(Long batchId, long offset, int limit) {
+        return jdbc.query("SELECT student.student_no, student.full_name, college.name AS college_name, " +
+            "major.name AS major_name" + UNMATCHED_FROM + "ORDER BY student.student_no, student.id LIMIT ? OFFSET ?",
+            (rs, n) -> new UnmatchedStudentVO(rs.getString("student_no"),
+                rs.getString("full_name"), rs.getString("college_name"), rs.getString("major_name")),
+            batchId, Integer.valueOf(limit), Long.valueOf(offset));
     }
 
     public void insertAudit(Long actorId, String actorKind, String actorRole, String scopeBasis,

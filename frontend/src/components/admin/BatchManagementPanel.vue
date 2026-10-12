@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
+import UnmatchedStudentsDialog from './UnmatchedStudentsDialog.vue'
 import {
   selectionBatchService,
   type AcademicYearOption,
@@ -22,6 +23,8 @@ const batches = ref<BatchSummary[]>([])
 const selectedCollegeId = ref<number | null>(null)
 const selectedBatchId = ref<number | null>(null)
 const detail = ref<BatchDetail | null>(null)
+const rosterRound = ref<number | null>(null)
+watch(selectedBatchId, () => { rosterRound.value = null })
 const scheduleEditor = ref<HTMLFormElement | null>(null)
 const quotaEditor = ref<HTMLElement | null>(null)
 const scheduleEditorOpen = ref(false)
@@ -764,12 +767,13 @@ onMounted(loadColleges)
         </div>
         <div class="batch-round-table-wrap">
           <table class="batch-quota-table batch-round-table">
-            <thead><tr><th>轮次</th><th>阶段</th><th>待处理</th><th>录取</th><th>不录取</th><th>时间跳过</th><th>批次取消</th></tr></thead>
+            <thead><tr><th>轮次</th><th>阶段</th><th>待处理</th><th>录取</th><th>不录取</th><th>时间跳过</th><th>批次取消</th><th v-if="props.canManage">未完成名单</th></tr></thead>
             <tbody>
               <tr v-for="round in statistics.rounds" :key="round.roundNo">
                 <td>第 {{ round.roundNo }} 轮</td><td>{{ round.stageStatus }}</td><td>{{ round.pendingApplicationCount }}</td>
                 <td>{{ round.admittedCount }}</td><td>{{ round.notAdmittedCount }}</td><td>{{ round.skippedStudentCount }}</td>
                 <td>{{ round.cancelledApplicationCount }}</td>
+                <td v-if="props.canManage"><button type="button" class="secondary-button" :disabled="round.stageStatus !== 'CLOSED' || selectedBatch?.status === 'CANCELLED'" @click="rosterRound = round.roundNo">未完成互选学生</button></td>
               </tr>
             </tbody>
           </table>
@@ -818,6 +822,7 @@ onMounted(loadColleges)
     <div v-if="!loading && batches.length === 0" class="batch-empty batch-empty-large">
       <strong>{{ canCreate ? '还没有互选批次' : '当前授权范围内没有批次' }}</strong><span>{{ canCreate ? '先创建草稿，再配置完整排期与导师名额。' : '请联系总管理员确认批次管理范围。' }}</span>
     </div>
+    <UnmatchedStudentsDialog v-if="rosterRound && selectedBatch" :key="`${selectedBatch.id}-${rosterRound}`" :batch-id="selectedBatch.id" :round-no="rosterRound" :batch-name="selectedBatch.name" @close="rosterRound = null" />
   </section>
 </template>
 

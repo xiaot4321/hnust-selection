@@ -41,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -418,6 +419,86 @@ class SelectionBatchManagementServiceImplTest {
         when(repository.lockBatch(BATCH_ID)).thenReturn(Optional.of(batch("DRAFT")));
         when(repository.teacherHasBatchQuota(BATCH_ID, TEACHER_ID)).thenReturn(true);
         when(repository.scopeEditTimeOpen(BATCH_ID)).thenReturn(editOpen);
+    }
+
+    private void prepareRosterContext(String stageStatus) {
+        prepareAdminContext();
+        when(repository.findBatch(BATCH_ID)).thenReturn(Optional.of(batch("ACTIVE")));
+        when(authorizationService.hasCapability(admin, "BATCH_MANAGER", COLLEGE_ID, BATCH_ID)).thenReturn(true);
+        when(repository.stageStatus(BATCH_ID, "ROUND_1")).thenReturn(Optional.of(stageStatus));
+    }
+
+    @Test
+    void closedRoundRosterUsesTwentyFiveRowsAndPreservesTotal() {
+        prepareRosterContext("CLOSED");
+        when(repository.countUnmatchedStudents(BATCH_ID)).thenReturn(51L);
+        when(repository.listUnmatchedStudents(BATCH_ID, 25L, 25)).thenReturn(Collections.singletonList(
+            new cn.hnust.selection.vo.UnmatchedStudentVO("0000123", "学生甲", "计算机学院", "软件工程")));
+        cn.hnust.selection.common.PageResult<cn.hnust.selection.vo.UnmatchedStudentVO> result =
+            service.unmatchedStudents(admin, BATCH_ID, 1, 2);
+        assertEquals(25, result.getPageSize()); assertEquals(2, result.getPageNo()); assertEquals(51L, result.getTotal());
+        assertEquals("0000123", result.getItems().get(0).getStudentNo());
+    }
+
+    @Test
+    void openOrReopenedRoundCannotReadOrExportRoster() {
+        prepareRosterContext("OPEN");
+        assertThrows(ApiException.class, () -> service.unmatchedStudents(admin, BATCH_ID, 1, 1));
+        assertThrows(ApiException.class, () -> service.exportUnmatchedStudents(admin, BATCH_ID, 1));
+        verify(repository, never()).countUnmatchedStudents(any());
+    }
+
+    @Test
+    void rosterRejectsOutOfScopeManagerBeforeReadingNames() {
+        prepareRosterContext("CLOSED");
+        when(authorizationService.hasCapability(admin, "BATCH_MANAGER", COLLEGE_ID, BATCH_ID)).thenReturn(false);
+        assertThrows(ApiException.class, () -> service.unmatchedStudents(admin, BATCH_ID, 1, 1));
+        assertThrows(ApiException.class, () -> service.exportUnmatchedStudents(admin, BATCH_ID, 1));
+        verify(repository, never()).countUnmatchedStudents(any());
+    }
+
+    @Test
+    void rosterRejectsInvalidPageRoundAndCancelledBatch() {
+        prepareRosterContext("CLOSED");
+        assertThrows(ApiException.class, () -> service.unmatchedStudents(admin, BATCH_ID, 1, 0));
+        assertThrows(ApiException.class, () -> service.unmatchedStudents(admin, BATCH_ID, 4, 1));
+        when(repository.findBatch(BATCH_ID)).thenReturn(Optional.of(batch("CANCELLED")));
+        assertThrows(ApiException.class, () -> service.unmatchedStudents(admin, BATCH_ID, 1, 1));
+    }
+
+    @Test
+    void excelExportIncludesAllPagesAndKeepsStudentNumbersAsText() throws Exception {
+        prepareRosterContext("CLOSED");
+        java.util.List<cn.hnust.selection.vo.UnmatchedStudentVO> first = new ArrayList<>();
+        for (int i = 0; i < 500; i++) first.add(new cn.hnust.selection.vo.UnmatchedStudentVO(
+            String.format("%08d", i), "学生" + i, "计算机学院", "软件工程"));
+        when(repository.listUnmatchedStudents(BATCH_ID, 0L, 500)).thenReturn(first);
+        when(repository.listUnmatchedStudents(BATCH_ID, 500L, 500)).thenReturn(Collections.singletonList(
+            new cn.hnust.selection.vo.UnmatchedStudentVO("00000500", "=1+1", "计算机学院", "计算机科学与技术")));
+        byte[] content = service.exportUnmatchedStudents(admin, BATCH_ID, 1);
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(content))) {
+            org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheetAt(0);
+            assertEquals(501, sheet.getLastRowNum());
+            assertEquals("学号", sheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals("00000000", sheet.getRow(1).getCell(0).getStringCellValue());
+            assertEquals(org.apache.poi.ss.usermodel.CellType.STRING, sheet.getRow(501).getCell(1).getCellType());
+            assertEquals("=1+1", sheet.getRow(501).getCell(1).getStringCellValue());
+        }
+        verify(repository).insertAudit(eq(ADMIN_ACCOUNT_ID), eq("ADMIN"), eq("ADMIN"), anyString(),
+            eq("SELECTION_BATCH"), eq(BATCH_ID), eq("UNMATCHED_STUDENTS_EXPORT"), any(),
+            eq("roundNo=1;rowCount=501"), anyString(), any());
+    }
+
+    @Test
+    void emptyRosterExportsHeadersOnly() throws Exception {
+        prepareRosterContext("CLOSED");
+        when(repository.listUnmatchedStudents(BATCH_ID, 0L, 500)).thenReturn(Collections.emptyList());
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.exportUnmatchedStudents(admin, BATCH_ID, 1)))) {
+            assertEquals(0, workbook.getSheetAt(0).getLastRowNum());
+            assertEquals(4, workbook.getSheetAt(0).getRow(0).getLastCellNum());
+        }
     }
 
     private void prepareAdminContext() {
