@@ -52,6 +52,8 @@ class BusinessQuerySqlTest {
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         verify(jdbc).queryForObject(sqlCaptor.capture(), eq(Integer.class), eq(19L), eq(7L));
         String sql = sqlCaptor.getValue().toUpperCase(Locale.ROOT);
+        assertFalse(java.util.regex.Pattern.compile("\\bWINDOW\\b").matcher(sql).find(),
+            "WINDOW is reserved in MySQL 8; use a non-keyword alias");
         int historicJoin = sql.indexOf("JOIN ANNUAL_ELIGIBILITY HISTORIC");
         int historicWhere = sql.indexOf("WHERE APPLICATION.SUPPLEMENT_WINDOW_ID", historicJoin);
         assertTrue(historicJoin >= 0);
