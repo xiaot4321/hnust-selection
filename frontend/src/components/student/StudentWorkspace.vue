@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ApiError } from '../../api/http'
 import EmailSecurityPanel from '../auth/EmailSecurityPanel.vue'
 import type {
@@ -67,6 +67,17 @@ const correctionForm = reactive({ majorId: '', degreeType: '' as DegreeType | ''
 const teacherFilter = reactive({ keyword: '', researchDirection: '', onlyApplicable: false })
 
 const selectedBatch = computed(() => batches.value.find((item) => item.batchId === selectedBatchId.value) ?? null)
+const selectionUnavailable = computed(() => !selectedBatch.value
+  || ['COMPLETED', 'ARCHIVED', 'CANCELLED'].includes(selectedBatch.value.batchStatus))
+const visibleSections = computed(() => selectionUnavailable.value
+  ? sections.filter((section) => !['preferences', 'supplement'].includes(section.key))
+  : sections)
+const showSelectionEmpty = computed(() => selectionUnavailable.value
+  && ['overview', 'teachers', 'preferences', 'supplement'].includes(activeSection.value))
+function preferredBatchId(): number | null {
+  return batches.value.find((batch) => ['SCHEDULED', 'ACTIVE', 'PAUSED'].includes(batch.batchStatus))?.batchId
+    ?? batches.value[0]?.batchId ?? null
+}
 const canEditPreferences = computed(() => selectedBatch.value?.actions.canSubmitPreferences ?? false)
 const canWithdrawPreferences = computed(() => selectedBatch.value?.actions.canWithdrawPreferences ?? false)
 const canApplySupplement = computed(() => selectedBatch.value?.actions.canApplySupplement ?? false)
@@ -253,7 +264,7 @@ async function initialize(): Promise<void> {
 
   if (batchResult.status === 'fulfilled') {
     batches.value = batchResult.value.items
-    selectedBatchId.value = batches.value[0]?.batchId ?? null
+    selectedBatchId.value = preferredBatchId()
   } else if (!errorMessage.value) errorMessage.value = errorText(batchResult.reason)
 
   if (correctionResult.status === 'fulfilled') correctionRequests.value = correctionResult.value.items
@@ -287,6 +298,14 @@ watch(selectedBatchId, (batchId) => {
   void loadBatch(batchId)
   if (activeSection.value === 'teachers' || (activeSection.value === 'preferences' && canEditPreferences.value)) void loadTeachers()
 })
+watch(selectionUnavailable, (unavailable) => {
+  if (!unavailable) return
+  teachers.value = []
+  teacherTotal.value = 0
+  teacherDetail.value = null
+  errorMessage.value = ''
+  if (['teachers', 'preferences', 'supplement'].includes(activeSection.value)) activeSection.value = 'overview'
+})
 watch(activeSection, (section) => {
   errorMessage.value = ''
   successMessage.value = ''
@@ -308,23 +327,23 @@ function openChoiceSection(): void {
   openSection(canEditPreferences.value ? 'preferences' : 'teachers')
 }
 
-async function reloadBatches(): Promise<void> {
+async function reloadBatches(silent = false): Promise<void> {
   refreshingBatches.value = true
-  errorMessage.value = ''
+  if (!silent) errorMessage.value = ''
   try {
     const response = await listStudentBatches()
     batches.value = response.items
     if (!selectedBatchId.value || !batches.value.some((item) => item.batchId === selectedBatchId.value)) {
-      selectedBatchId.value = batches.value[0]?.batchId ?? null
+      selectedBatchId.value = preferredBatchId()
     }
-  } catch (error) { errorMessage.value = errorText(error) }
+  } catch (error) { if (!silent) errorMessage.value = errorText(error) }
   finally { refreshingBatches.value = false }
 }
 
 async function loadTeachers(): Promise<void> {
   teacherQueryFailed.value = false
   if (!selectedBatchId.value) return
-  if (teacherDirectoryNotStarted.value) {
+  if (selectionUnavailable.value || teacherDirectoryNotStarted.value) {
     teachers.value = []
     teacherTotal.value = 0
     return
@@ -364,7 +383,7 @@ function changeTeacherPage(page: number): void {
   void loadTeachers()
 }
 async function showTeacher(teacherId: number): Promise<void> {
-  if (!selectedBatchId.value) return
+  if (!selectedBatchId.value || selectionUnavailable.value) return
   teacherDetailLoading.value = true
   try {
     teacherDetail.value = await getTeacherDetail(teacherId, selectedBatchId.value)
@@ -564,7 +583,14 @@ function stageComplete(stageCode: string): boolean {
     || (current === stageCode && selectedBatch.value.currentStage?.stageStatus === 'CLOSED')
 }
 
-onMounted(() => { void initialize() })
+let batchRefreshTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  void initialize()
+  batchRefreshTimer = setInterval(() => {
+    if (!pageLoading.value && !refreshingBatches.value && document.visibilityState === 'visible') void reloadBatches(true)
+  }, 30_000)
+})
+onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
 </script>
 <template>
   <section class="student-workspace" aria-labelledby="student-workspace-title">
@@ -583,7 +609,7 @@ onMounted(() => { void initialize() })
 
     <nav class="student-navigation" aria-label="学生业务导航">
       <button
-        v-for="section in sections"
+        v-for="section in visibleSections"
         :key="section.key"
         type="button"
         :class="{ active: activeSection === section.key || (section.key === 'preferences' && activeSection === 'teachers') }"
@@ -602,17 +628,28 @@ onMounted(() => { void initialize() })
     </div>
 
     <template v-else>
-      <nav v-if="activeSection === 'teachers' || activeSection === 'preferences'" class="student-choice-navigation" aria-label="导师与志愿">
+      <nav v-if="!selectionUnavailable && (activeSection === 'teachers' || activeSection === 'preferences')" class="student-choice-navigation" aria-label="导师与志愿">
         <button type="button" :class="{ active: activeSection === 'teachers' }" :aria-current="activeSection === 'teachers' ? 'page' : undefined" @click="openSection('teachers')">导师目录</button>
         <button type="button" :class="{ active: activeSection === 'preferences' }" :aria-current="activeSection === 'preferences' ? 'page' : undefined" @click="openSection('preferences')">我的志愿</button>
       </nav>
 
-      <section v-if="activeSection === 'overview'" class="student-section">
+      <section v-if="showSelectionEmpty" class="student-section">
+        <div class="empty-batch">
+          <p class="section-kicker">当前互选安排</p>
+          <h3>当前暂无开放的互选</h3>
+          <p v-if="selectedBatch">本次互选已结束，请等待管理员发布新批次。你仍可查看历史互选结果。</p>
+          <p v-else>请等待管理员发布互选批次；若已发布却未显示，请联系管理员核对学院、学年和年度资格。</p>
+          <button class="student-button" type="button" :disabled="refreshingBatches" @click="reloadBatches()">{{ refreshingBatches ? '正在刷新…' : '刷新批次' }}</button>
+          <button v-if="selectedBatch" class="student-button secondary" type="button" @click="openSection('progress')">查看历史结果</button>
+          <button class="student-button primary" type="button" @click="openSection('profile')">查看个人资料</button>
+        </div>
+      </section>
+      <section v-else-if="activeSection === 'overview'" class="student-section">
         <div v-if="!selectedBatch" class="empty-batch">
           <p class="section-kicker">当前互选安排</p>
           <h3>暂时没有可办理的批次</h3>
           <p>本学院已发布批次只对该学年年度资格为“符合（ELIGIBLE）”且当前有效的学生显示。刚发布批次时请先刷新；若仍未显示，请联系管理员核对你的学院、学年和年度资格。</p>
-          <button class="student-button" type="button" :disabled="refreshingBatches" @click="reloadBatches">
+          <button class="student-button" type="button" :disabled="refreshingBatches" @click="reloadBatches()">
             {{ refreshingBatches ? '正在刷新…' : '刷新批次' }}
           </button>
           <button class="student-button primary" type="button" @click="openSection('profile')">查看个人资料</button>
