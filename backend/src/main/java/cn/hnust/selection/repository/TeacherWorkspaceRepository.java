@@ -198,8 +198,8 @@ public class TeacherWorkspaceRepository {
         StringBuilder placeholders = marks(applicationIds.size());
         List<Object> args = new ArrayList<Object>(); args.add(teacherId); args.add(batchId); args.addAll(applicationIds);
         return jdbc.query("SELECT application.id AS application_id, application.sort_submitted_at, application.sort_student_no " +
-            "FROM supplement_application application JOIN supplement_window window ON window.id = application.supplement_window_id " +
-            "WHERE application.teacher_id = ? AND window.batch_id = ? AND application.id IN (" + placeholders + ") " +
+            "FROM supplement_application application JOIN supplement_window supplement_window_row ON supplement_window_row.id = application.supplement_window_id " +
+            "WHERE application.teacher_id = ? AND supplement_window_row.batch_id = ? AND application.id IN (" + placeholders + ") " +
             "ORDER BY application.sort_submitted_at, application.sort_student_no, application.id",
             (rs, n) -> new BulkSortItem(rs.getLong("application_id"), rs.getTimestamp("sort_submitted_at"), rs.getString("sort_student_no")), args.toArray());
     }
@@ -329,12 +329,12 @@ public class TeacherWorkspaceRepository {
         String sql = "SELECT application.id AS application_id, application.batch_student_id, application.supplement_window_id, " +
             "application.application_status, application.teacher_id, batch.batch_status, batch.current_stage_id, " +
             "batch.academic_year_id, stage.id AS stage_id, stage.stage_status, stage.execution_cycle, " +
-            "window.window_status, window.effective_start_at, window.effective_end_at, application.submitted_at, participant.student_id, " +
+            "supplement_window_row.window_status, supplement_window_row.effective_start_at, supplement_window_row.effective_end_at, application.submitted_at, participant.student_id, " +
             "participant.match_status, participant.current_relation_id, student.account_id, student.student_no, " +
             "student.major_id, student.degree_type, student.classification_version, quota.id AS quota_id, " +
             "quota.quota_limit, quota.occupied_count, application.batch_teacher_quota_id " +
-            "FROM supplement_application application JOIN supplement_window window ON window.id = application.supplement_window_id " +
-            "JOIN batch_stage stage ON stage.id = window.stage_id JOIN selection_batch batch ON batch.id = window.batch_id " +
+            "FROM supplement_application application JOIN supplement_window supplement_window_row ON supplement_window_row.id = application.supplement_window_id " +
+            "JOIN batch_stage stage ON stage.id = supplement_window_row.stage_id JOIN selection_batch batch ON batch.id = supplement_window_row.batch_id " +
             "JOIN batch_student participant ON participant.id = application.batch_student_id " +
             "JOIN student ON student.id = participant.student_id " +
             "JOIN batch_teacher_quota quota ON quota.id = application.batch_teacher_quota_id " +
@@ -354,8 +354,8 @@ public class TeacherWorkspaceRepository {
     }
 
     public boolean hadSupplementEligibilityAtSubmission(Long windowId, Long quotaId, java.sql.Timestamp submittedAt) {
-        List<Long> rows = jdbc.query("SELECT eligibility.id FROM supplement_window window " +
-            "JOIN selection_batch batch ON batch.id = window.batch_id " +
+        List<Long> rows = jdbc.query("SELECT eligibility.id FROM supplement_window supplement_window_row " +
+            "JOIN selection_batch batch ON batch.id = supplement_window_row.batch_id " +
             "JOIN batch_teacher_quota quota ON quota.id = ? AND quota.batch_id = batch.id " +
             "JOIN teacher ON teacher.id = quota.teacher_id AND teacher.college_id = batch.college_id " +
             "JOIN annual_eligibility eligibility ON eligibility.academic_year_id = batch.academic_year_id " +
@@ -363,7 +363,7 @@ public class TeacherWorkspaceRepository {
             "AND eligibility.student_id IS NULL AND eligibility.eligibility_status = 'ELIGIBLE' " +
             "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= ?) " +
             "AND (eligibility.valid_to IS NULL OR ? < eligibility.valid_to) " +
-            "WHERE window.id = ? FOR UPDATE", (rs, n) -> rs.getLong(1),
+            "WHERE supplement_window_row.id = ? FOR UPDATE", (rs, n) -> rs.getLong(1),
             quotaId, submittedAt, submittedAt, windowId);
         return !rows.isEmpty();
     }
@@ -520,8 +520,8 @@ public class TeacherWorkspaceRepository {
             "snapshot.major_name_snapshot AS major_name, snapshot.degree_type, snapshot.biography, snapshot.resume_file_id, " +
             "application.application_status, DATE_FORMAT(application.submitted_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS submitted_at, " +
             "DATE_FORMAT(application.decided_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS processed_at " +
-            "FROM supplement_application application JOIN supplement_window window ON window.id = application.supplement_window_id " +
-            "JOIN selection_batch batch ON batch.id = window.batch_id JOIN application_profile_snapshot snapshot " +
+            "FROM supplement_application application JOIN supplement_window supplement_window_row ON supplement_window_row.id = application.supplement_window_id " +
+            "JOIN selection_batch batch ON batch.id = supplement_window_row.batch_id JOIN application_profile_snapshot snapshot " +
             "ON snapshot.id = application.active_snapshot_id WHERE application.teacher_id = ? AND batch.id = ? " +
             "ORDER BY application.submitted_at, snapshot.student_no, application.id LIMIT ? OFFSET ?";
         return jdbc.query(sql, (rs, n) -> {
@@ -542,10 +542,10 @@ public class TeacherWorkspaceRepository {
     }
     public boolean hasSupplementWorkAccess(Long teacherId, Long batchId) {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM batch_teacher_quota quota " +
-            "JOIN supplement_window window ON window.batch_id = quota.batch_id " +
+            "JOIN supplement_window supplement_window_row ON supplement_window_row.batch_id = quota.batch_id " +
             "JOIN selection_batch batch ON batch.id = quota.batch_id " +
-            "WHERE window.batch_id = ? AND quota.teacher_id = ? AND window.window_status = 'OPEN' " +
-            "AND window.effective_start_at <= UTC_TIMESTAMP(3) AND UTC_TIMESTAMP(3) < window.effective_end_at " +
+            "WHERE supplement_window_row.batch_id = ? AND quota.teacher_id = ? AND supplement_window_row.window_status = 'OPEN' " +
+            "AND supplement_window_row.effective_start_at <= UTC_TIMESTAMP(3) AND UTC_TIMESTAMP(3) < supplement_window_row.effective_end_at " +
             "AND (EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
             "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
             "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
@@ -554,7 +554,7 @@ public class TeacherWorkspaceRepository {
             "AND eligibility_slot.college_id = batch.college_id AND eligibility_slot.teacher_id = quota.teacher_id) " +
             "OR EXISTS (SELECT 1 FROM supplement_application application " +
             "JOIN annual_eligibility historic ON historic.student_id IS NULL " +
-            "WHERE application.supplement_window_id = window.id AND application.batch_teacher_quota_id = quota.id " +
+            "WHERE application.supplement_window_id = supplement_window_row.id AND application.batch_teacher_quota_id = quota.id " +
             "AND application.application_status = 'IN_REVIEW' " +
             "AND historic.academic_year_id = batch.academic_year_id AND historic.college_id = batch.college_id " +
             "AND historic.teacher_id = quota.teacher_id AND historic.eligibility_status = 'ELIGIBLE' " +
@@ -594,6 +594,13 @@ public class TeacherWorkspaceRepository {
         }, teacherId, batchId);
         if (rows.isEmpty()) return Optional.empty();
         TeacherBatchSummaryVO summary = rows.get(0);
+        summary.setRoundOpenings(jdbc.query("SELECT stage_code, stage_status, " +
+            "DATE_FORMAT(COALESCE(effective_start_at, planned_start_at), '%Y-%m-%dT%H:%i:%s.%fZ') AS opens_at, " +
+            "DATE_FORMAT(COALESCE(effective_end_at, planned_end_at), '%Y-%m-%dT%H:%i:%s.%fZ') AS ends_at " +
+            "FROM batch_stage WHERE batch_id = ? AND stage_code IN ('ROUND_1','ROUND_2','ROUND_3') ORDER BY stage_order",
+            (rs, n) -> new TeacherBatchSummaryVO.RoundOpening(
+                Integer.parseInt(rs.getString("stage_code").substring(6)), rs.getString("opens_at"),
+                rs.getString("ends_at"), rs.getString("stage_status")), batchId));
         summary.setMatchedStudents(jdbc.query("SELECT relation.id AS relation_id, student.student_no, student.full_name, " +
             "major.name AS major_name, student.degree_type, relation.source_type, " +
             "DATE_FORMAT(relation.locked_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS locked_at " +
@@ -622,10 +629,10 @@ public class TeacherWorkspaceRepository {
                     "JOIN student ON student.id = participant.student_id WHERE application.id = ? " +
                     "AND application.teacher_id = ? AND stage.batch_id = ?";
             } else if ("SUPPLEMENT".equals(reference.getApplicationType())) {
-                sql = "SELECT student.account_id FROM supplement_application application JOIN supplement_window window " +
-                    "ON window.id = application.supplement_window_id JOIN batch_student participant " +
+                sql = "SELECT student.account_id FROM supplement_application application JOIN supplement_window supplement_window_row " +
+                    "ON supplement_window_row.id = application.supplement_window_id JOIN batch_student participant " +
                     "ON participant.id = application.batch_student_id JOIN student ON student.id = participant.student_id " +
-                    "WHERE application.id = ? AND application.teacher_id = ? AND window.batch_id = ?";
+                    "WHERE application.id = ? AND application.teacher_id = ? AND supplement_window_row.batch_id = ?";
             } else return new ArrayList<Long>();
             List<Long> found = jdbc.query(sql, (rs, n) -> rs.getLong(1), reference.getApplicationId(), teacherId, batchId);
             if (found.size() != 1) return new ArrayList<Long>();

@@ -8,6 +8,7 @@ public class TeacherBatchSummaryVO {
     private String batchName;
     private String batchStatus;
     private String currentStage;
+    private List<RoundOpening> roundOpenings;
     private Integer quotaLimit;
     private Integer occupiedCount;
     private Integer remainingCount;
@@ -21,6 +22,23 @@ public class TeacherBatchSummaryVO {
     public void setBatchStatus(String batchStatus) { this.batchStatus = batchStatus; }
     public String getCurrentStage() { return currentStage; }
     public void setCurrentStage(String currentStage) { this.currentStage = currentStage; }
+    public List<RoundOpening> getRoundOpenings() { return roundOpenings; }
+    public void setRoundOpenings(List<RoundOpening> roundOpenings) { this.roundOpenings = roundOpenings; }
+
+    public static class RoundOpening {
+        private final int roundNo;
+        private final String opensAt;
+        private final String endsAt;
+        private final String status;
+        public RoundOpening(int roundNo, String opensAt, String endsAt, String status) {
+            this.roundNo = roundNo; this.opensAt = opensAt; this.endsAt = endsAt; this.status = status;
+        }
+        public String getEndsAt() { return endsAt; }
+        public String getStatus() { return status; }
+        public int getRoundNo() { return roundNo; }
+        public String getOpensAt() { return opensAt; }
+    }
+
     public Integer getQuotaLimit() { return quotaLimit; }
     public void setQuotaLimit(Integer quotaLimit) { this.quotaLimit = quotaLimit; }
     public Integer getOccupiedCount() { return occupiedCount; }

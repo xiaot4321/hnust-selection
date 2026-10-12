@@ -557,7 +557,7 @@ GET /api/me/notices 返回通用分页 items，每项包含 noticeId、title、c
 
 批量决定端点立即返回 `202`，回执包含 `operationId` 和 `status`。后台按静态授权时已确定的稳定顺序逐项处理；状态可为 `PROCESSING`、`COMPLETED` 或 `FAILED`。`GET /api/operations/{operationId}` 的导师批量结果含 `items`，每项含 `applicationId`、`executionOrder`、`itemResult`、`code`、`message`、`relationId`。权限不足或账号停用后，尚未处理的项目失败；已提交项目不回滚。
 
-批次汇总字段为 `batchId`、`batchName`、`batchStatus`、`currentStage`、`quotaLimit`、`occupiedCount`、`remainingCount` 和 `matchedStudents`。锁定关系项仅包含 `relationId`、`studentNo`、`fullName`、`majorName`、`degreeType`、`source`、`lockedAt`。申请消息请求字段为 `title`、`content`、`applicationReferences`；每个引用只包含 `applicationType`（`ROUND` 或 `SUPPLEMENT`）及 `applicationId`。收件人由服务端从当前导师与批次的申请记录解析，响应字段为 `noticeId`、`recipientCount`、`sentAt`。
+批次汇总字段为 `batchId`、`batchName`、`batchStatus`、`currentStage`、`quotaLimit`、`occupiedCount`、`remainingCount` 、`roundOpenings` 和 `matchedStudents`。`roundOpenings` 仅包含三轮的 `roundNo` 、`status`、`opensAt` 与 `endsAt`（时间为 UTC 或空值），优先使用实际开始时间，未生成实际时间时使用计划开始时间；仅返回本人有关联名额的批次排期。锁定关系项仅包含 `relationId`、`studentNo`、`fullName`、`majorName`、`degreeType`、`source`、`lockedAt`。申请消息请求字段为 `title`、`content`、`applicationReferences`；每个引用只包含 `applicationType`（`ROUND` 或 `SUPPLEMENT`）及 `applicationId`。收件人由服务端从当前导师与批次的申请记录解析，响应字段为 `noticeId`、`recipientCount`、`sentAt`。
 
 ## 6. 错误码目录（技术基线）
 
@@ -671,3 +671,10 @@ GET /api/me/notices 返回通用分页 items，每项包含 noticeId、title、c
 | 错误码和消息 | 错误码用稳定字符串大写下划线格式，HTTP 状态表达大类，客户端按 code 分支；`message` 使用简明中文展示，字段错误单独返回。内部异常只进日志，不泄露 SQL/堆栈。 | 已确认 |
 
 `TODO-50` 至 `TODO-63`、`TODO-68` 至 `TODO-70` 已按业务方确认结果写入登记表及规则文档；此前 `TODO-64/66/67` 决策被 TODO-68 取代。本版本明确年度资格关键词查询及复选批量维护由前端多次调用现有单人命令完成；服务端每人独立校验、历史和审计。批次发布不要求学生/导师参与名单；补选候选按年度资格、资料、名额和冻结范围自动计算。导师可在待审核期间继续修改同一公开资料版本，管理员须基于最新 ETag 审核；头像作为同版字段存入 OSS 私有对象，管理员批准后才进入学生目录。学生、导师与管理员初始/重置临时凭证均不设到期时间，仍为一次性消费并要求首次登录改密；学生/导师初始密码仍取学号/工号末尾六位，较短编号完整使用。管理员轮次重开请求包含管理员指定的 `newEndAt` 与原因。端点路径与请求/响应字段是实施契约；页面按契约细化按钮可用条件、字段和错误展示。仍需补充 OpenAPI 文档与接口级验收记录，并验证目标部署环境要求。本 API 定稿不构成生产部署批准。
+
+### 每轮关闭后的当前未匹配学生（TODO-71，2026-10-12）
+
+- `GET /api/admin/selection-batches/{batchId}/rounds/{roundNo}/unmatched-students?pageNo=1`：固定 `pageSize=25`，返回 `Result<PageResult<UnmatchedStudent>>`；字段 `studentNo/fullName/collegeName/majorName`。
+- `GET /api/admin/selection-batches/{batchId}/rounds/{roundNo}/unmatched-students/export`：直接下载全部名单的 XLSX，响应类型 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，`Cache-Control: private, no-store`；即时生成，不创建异步 CSV 任务。下载重新核对权限并记录导出审计。
+- 仅批次范围内 `BATCH_MANAGER`（含总管理员）可读/导出；`roundNo` 为 1–3，阶段须 `CLOSED` 且批次未取消，否则 `ROUND_NOT_CLOSED`/409；无权资源按 404 隐藏。
+- 查询本批次冻结参与者中当前状态不是 `MATCHED` 的学生（含尚无匹配状态、待后续轮次和 `UNMATCHED`），按学号、学生主键稳定排序；展示当前姓名和专业、批次所属学院。分页/导出均以本次请求数据库快照为准，各请求之间名单可随录取变化。

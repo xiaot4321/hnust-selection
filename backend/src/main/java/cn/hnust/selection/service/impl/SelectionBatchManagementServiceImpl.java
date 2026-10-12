@@ -1,5 +1,13 @@
 package cn.hnust.selection.service.impl;
 
+import cn.hnust.selection.vo.UnmatchedStudentVO;
+import cn.hnust.selection.common.PageResult;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Row;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+
 import cn.hnust.selection.entity.AccountEntity;
 import cn.hnust.selection.entity.SelectionBatchEntity;
 import cn.hnust.selection.entity.TeacherQuotaEntity;
@@ -799,6 +807,67 @@ public class SelectionBatchManagementServiceImpl implements SelectionBatchManage
         SelectionBatchEntity batch = requireBatch(batchId);
         requireBatchReader(actor, batch);
         return repository.findBatchStatistics(batch);
+    }
+
+    private AccountPrincipal requireClosedRoundRoster(AccountPrincipal actor, Long batchId, int roundNo) {
+        if (roundNo < 1 || roundNo > 3) throw new ApiException("INVALID_ARGUMENT", "轮次只能为 1、2、3", HttpStatus.BAD_REQUEST);
+        SelectionBatchEntity batch = requireBatch(batchId);
+        AccountPrincipal current = requireBatchManager(actor, batch);
+        if ("CANCELLED".equals(batch.getStatus()) || !"CLOSED".equals(repository.stageStatus(batchId, "ROUND_" + roundNo).orElse(""))) {
+            throw new ApiException("ROUND_NOT_CLOSED", "该轮尚未结束，暂不能查看未完成互选名单", HttpStatus.CONFLICT);
+        }
+        return current;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<UnmatchedStudentVO> unmatchedStudents(
+        AccountPrincipal actor, Long batchId, int roundNo, int pageNo) {
+        requireClosedRoundRoster(actor, batchId, roundNo);
+        if (pageNo < 1) throw new ApiException("INVALID_ARGUMENT", "页码必须大于零", HttpStatus.BAD_REQUEST);
+        return new PageResult<UnmatchedStudentVO>(
+            repository.listUnmatchedStudents(batchId, ((long) pageNo - 1L) * 25L, 25),
+            repository.countUnmatchedStudents(batchId), pageNo, 25);
+    }
+
+    @Override
+    @Transactional
+    public byte[] exportUnmatchedStudents(AccountPrincipal actor, Long batchId, int roundNo) {
+        AccountPrincipal current = requireClosedRoundRoster(actor, batchId, roundNo);
+        SXSSFWorkbook workbook = new SXSSFWorkbook(100);
+        try {
+            Sheet sheet = workbook.createSheet("未完成互选学生");
+            String[] headers = {"学号", "姓名", "学院", "专业"};
+            Row header = sheet.createRow(0);
+            for (int col = 0; col < headers.length; col++) {
+                header.createCell(col).setCellValue(headers[col]);
+                sheet.setColumnWidth(col, (col == 2 || col == 3 ? 30 : 20) * 256);
+            }
+            sheet.createFreezePane(0, 1);
+            int rowNo = 1;
+            for (long offset = 0; ; offset += 500) {
+                List<UnmatchedStudentVO> page = repository.listUnmatchedStudents(batchId, offset, 500);
+                for (UnmatchedStudentVO student : page) {
+                    if (rowNo >= 1048576) throw new ApiException("EXPORT_TOO_LARGE", "名单超过 Excel 单表行数限制", HttpStatus.CONFLICT);
+                    Row row = sheet.createRow(rowNo++);
+                    // 字符串单元格保留学号前导零，且不把用户内容作为公式执行。
+                    row.createCell(0).setCellValue(student.getStudentNo()); row.createCell(1).setCellValue(student.getFullName());
+                    row.createCell(2).setCellValue(student.getCollegeName()); row.createCell(3).setCellValue(student.getMajorName());
+                }
+                if (page.size() < 500) break;
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            workbook.write(output);
+            repository.insertAudit(current.getAccountId(), "ADMIN", "ADMIN", "batchId=" + batchId,
+                "SELECTION_BATCH", batchId, "UNMATCHED_STUDENTS_EXPORT", null,
+                "roundNo=" + roundNo + ";rowCount=" + (rowNo - 1), "当前未完成互选学生名单导出", null);
+            return output.toByteArray();
+        } catch (IOException ex) {
+            throw new ApiException("EXPORT_FAILED", "Excel 导出失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
+        } finally {
+            try { workbook.close(); } catch (IOException ignored) { }
+            workbook.dispose();
+        }
     }
 
     /**

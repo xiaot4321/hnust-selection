@@ -47,6 +47,29 @@ const bulkBusy = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const currentBatch = computed(() => batches.value.find((item) => item.batchId === selectedBatchId.value) ?? null)
+const clockNow = ref(Date.now())
+let scheduleTimer: number | undefined
+const roundOpeningText = computed(() => {
+  const prefix = `第 ${roundNo.value} 轮`
+  if (summary.value?.batchId !== selectedBatchId.value) return `${prefix}：正在获取排期…`
+  const rounds = summary.value.roundOpenings ?? []
+  const round = rounds.find((item) => item.roundNo === roundNo.value)
+  const ended = (item: typeof round): boolean => !!item && (item.status === 'CLOSED' ||
+    (summary.value?.batchStatus !== 'PAUSED' && !!item.endsAt && Date.parse(item.endsAt) <= clockNow.value))
+  if ([1, 2, 3].every((number) => ended(rounds.find((item) => item.roundNo === number)))) return '三轮互选已全部结束'
+  if (ended(round)) return `${prefix}：已结束`
+  if (summary.value.batchStatus === 'PAUSED') return `${prefix}：批次已暂停，请等待恢复后的排期`
+  if (summary.value.batchStatus === 'CANCELLED') return `${prefix}：批次已取消`
+  const format = (value: string): string => new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(new Date(value)) + '（北京时间）'
+  if (!round?.opensAt) return `${prefix}开放时间：暂未设置，请等待管理员配置`
+  if (round.status === 'OPEN' || Date.parse(round.opensAt) <= clockNow.value) {
+    return `${prefix}结束时间：${round.endsAt ? format(round.endsAt) : '暂未设置，请联系管理员'}`
+  }
+  return `${prefix}开放时间：${format(round.opensAt)}`
+})
 const allNoticeCandidates = computed(() => [
   ...applications.value.map((item) => ({ key: `ROUND:${item.applicationId}`, type: 'ROUND' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
   ...supplements.value.map((item) => ({ key: `SUPPLEMENT:${item.applicationId}`, type: 'SUPPLEMENT' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
@@ -116,8 +139,13 @@ async function loadProfile(): Promise<void> {
 }
 async function loadSummary(): Promise<void> {
   if (!selectedBatchId.value) { summary.value = null; return }
-  try { summary.value = await teacherWorkspaceService.summary(selectedBatchId.value) }
-  catch (error) { summary.value = null; errorMessage.value = messageFor(error) }
+  const batchId = selectedBatchId.value
+  try {
+    const result = await teacherWorkspaceService.summary(batchId)
+    if (selectedBatchId.value === batchId) summary.value = result
+  } catch (error) {
+    if (selectedBatchId.value === batchId) { summary.value = null; errorMessage.value = messageFor(error) }
+  }
 }
 async function loadRound(): Promise<void> {
   if (!selectedBatchId.value) { applications.value = []; selectedRoundIds.value = []; return }
@@ -291,11 +319,18 @@ watch(selectedBatchId, async () => {
 watch(section, async (next) => {
   if (next === 'profile' && !profile.value) await loadProfile()
   if (next === 'results') await loadSummary()
-  if (next === 'applications') await loadRound()
+  if (next === 'applications') await Promise.all([loadSummary(), loadRound()])
   if (next === 'supplement') await loadSupplements()
 })
-watch(roundNo, () => { if (section.value === 'applications') void loadRound() })
-onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
+watch(roundNo, () => { if (section.value === 'applications') void Promise.all([loadSummary(), loadRound()]) })
+onMounted(async () => {
+  scheduleTimer = window.setInterval(() => {
+    clockNow.value = Date.now()
+    if (!document.hidden && section.value === 'applications') void loadSummary()
+  }, 15000)
+  await Promise.all([loadBatches(), loadProfile()])
+})
+onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(scheduleTimer) })
 </script>
 
 <template>
@@ -317,6 +352,7 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
     <p v-if="successMessage" class="form-success" role="status">{{ successMessage }}</p>
 
     <section v-if="section === 'applications'" class="teacher-panel" aria-labelledby="round-applications-heading">
+      <p v-if="currentBatch" class="teacher-round-opening" role="status">{{ roundOpeningText }}</p>
       <div class="teacher-panel-heading">
         <div><h3 id="round-applications-heading">常规轮次申请</h3>
           <p>每轮只处理对应顺位投向本人的申请；导师决定不排序，录取成功后立即锁定关系。</p></div>
@@ -415,6 +451,7 @@ onMounted(async () => { await Promise.all([loadBatches(), loadProfile()]) })
 .teacher-workspace-tabs button,.round-selector button { border: 0; background: transparent; color: var(--hnust-muted); padding: 10px 13px; cursor: pointer; }
 .teacher-workspace-tabs button.active,.round-selector button.active { border-bottom: 2px solid var(--hnust-blue-dark); color: var(--hnust-blue-deep); font-weight: 700; }
 .teacher-panel { display: grid; gap: 19px; padding: 22px; border: 1px solid var(--hnust-line); background: #fff; }
+.teacher-round-opening { margin: 0 0 14px; color: #b43d3d; font-weight: 700; line-height: 1.7; }
 .teacher-panel-heading { align-items: center; }
 .teacher-panel-heading h3 { font-size: 19px; }
 .round-selector { display: flex; flex: 0 0 auto; gap: 2px; }

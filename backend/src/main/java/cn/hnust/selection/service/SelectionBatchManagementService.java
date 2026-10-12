@@ -1,5 +1,8 @@
 package cn.hnust.selection.service;
 
+import cn.hnust.selection.vo.UnmatchedStudentVO;
+import cn.hnust.selection.common.PageResult;
+
 import cn.hnust.selection.request.BatchScheduleRequest;
 import cn.hnust.selection.request.CreateSelectionBatchRequest;
 import cn.hnust.selection.request.ExtendRoundRequest;
@@ -28,6 +31,10 @@ import java.util.List;
  * 调用方不能通过请求体指定其他导师。</p>
  */
 public interface SelectionBatchManagementService {
+    PageResult<UnmatchedStudentVO> unmatchedStudents(
+        AccountPrincipal actor, Long batchId, int roundNo, int pageNo);
+    byte[] exportUnmatchedStudents(AccountPrincipal actor, Long batchId, int roundNo);
+
     /** 返回当前管理员可见的学院；仅学院级 BATCH_MANAGER 授权允许在该学院新建批次。 */
     List<BatchCollegeOptionVO> listAuthorizedColleges(AccountPrincipal actor);
 
