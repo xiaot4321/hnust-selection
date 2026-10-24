@@ -385,7 +385,7 @@ public class PersonnelManagementRepository {
     public void insertImportRow(Long importId, int rowNumber, String identifier, String status,
                                 String errorCode, String errorMessage, Long personId, Long eligibilityId,
                                 boolean teacher) {
-        jdbc.update("INSERT INTO personnel_import_row (import_id, row_number, person_identifier, row_status, " +
+        jdbc.update("INSERT INTO personnel_import_row (import_id, `row_number`, person_identifier, row_status, " +
                 "error_code, error_message, person_id, teacher_id, eligibility_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             importId, rowNumber, identifier == null || identifier.isEmpty() ? "(空)" : identifier, status,
             errorCode, errorMessage, teacher ? null : personId, teacher ? personId : null, eligibilityId);
@@ -419,9 +419,9 @@ public class PersonnelManagementRepository {
     }
 
     public List<PersonnelImportRowEntity> listImportRows(Long importId) {
-        return jdbc.query("SELECT row_number, person_identifier, row_status, error_code, error_message, " +
+        return jdbc.query("SELECT `row_number`, person_identifier, row_status, error_code, error_message, " +
                 "COALESCE(person_id, teacher_id) AS person_id, eligibility_id " +
-                "FROM personnel_import_row WHERE import_id = ? ORDER BY row_number",
+                "FROM personnel_import_row WHERE import_id = ? ORDER BY `row_number`",
             (rs, row) -> new PersonnelImportRowEntity(rs.getInt("row_number"), rs.getString("person_identifier"),
                 rs.getString("row_status"), rs.getString("error_code"), rs.getString("error_message"),
                 asLong(rs.getObject("person_id")), asLong(rs.getObject("eligibility_id"))), importId);

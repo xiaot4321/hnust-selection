@@ -66,4 +66,23 @@ class BusinessQuerySqlTest {
         assertTrue(historicWhereClause.contains("HISTORIC.ACADEMIC_YEAR_ID = BATCH.ACADEMIC_YEAR_ID"));
         assertTrue(historicWhereClause.contains("HISTORIC.TEACHER_ID = QUOTA.TEACHER_ID"));
     }
+    @Test
+    @SuppressWarnings("unchecked")
+    void personnelImportQuotesMysql8ReservedRowNumberInWriteAndReadQueries() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        PersonnelManagementRepository repository = new PersonnelManagementRepository(jdbc);
+        repository.insertImportRow(1L, 2, "20260001", "REJECTED", "INVALID_ARGUMENT", "测试", null, null, false);
+        repository.listImportRows(1L);
+
+        ArgumentCaptor<String> write = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(write.capture(), eq(1L), eq(2), eq("20260001"), eq("REJECTED"),
+            eq("INVALID_ARGUMENT"), eq("测试"), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
+        assertTrue(write.getValue().contains("`row_number`"));
+        ArgumentCaptor<String> read = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(read.capture(), any(RowMapper.class), eq(1L));
+        assertTrue(read.getValue().contains("SELECT `row_number`"));
+        assertTrue(read.getValue().contains("ORDER BY `row_number`"));
+    }
+
 }
