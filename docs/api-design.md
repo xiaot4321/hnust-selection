@@ -406,14 +406,14 @@ GET /api/admin/admin-accounts?pageNo=1&pageSize=20
 
 年度资格命令字段为 `personType`（`STUDENT`/`TEACHER`）、`personId`、`academicYearId`、`collegeId`、`eligibilityStatus`（`ELIGIBLE`/`INELIGIBLE`）、`evidenceType`、可选 `evidenceReference` 和 `sourceName`。服务端锁定人员行，校验人员学院后结束旧当前记录、追加新历史行并切换唯一当前资格槽位。当前资格查询默认只返回 `validTo=null` 的行；`history=true` 返回所有版本。状态更新、依据、来源、修改人和有效期均保留。人员检索使用 `/students`、`/teachers` 分页接口；`identifier` 采用包含匹配，学生查学号、姓名、专业名称，导师查工号和姓名，单页最多 100 人。年度资格页面筛选学年/人员类型后将多页复选选择保留在前端；点击批量保存时逐人提交现有资格命令，独立写入每人历史及审计，部分失败不回滚已成功人员。
 
-固定模板为 UTF-8 CSV；Excel 用户可直接打开并另存为 XLSX。模板版本为 `1.0`，表头和列顺序固定：
+固定模板为 UTF-8 CSV；Excel 用户可直接打开并另存为 XLSX。下载模板版本为 `1.1`，使用中文表头并带 UTF-8 BOM，列顺序固定；导入仍兼容旧版完整英文表头：
 
 ```text
-学生：loginIdentifier,studentNo,fullName,majorCode,degreeType,enrollmentYearCode,eligibilityStatus,evidenceType,evidenceReference
-导师：loginIdentifier,employeeNo,fullName,eligibilityStatus,evidenceType,evidenceReference
+学生：登录标识,学号,姓名,专业代码,学位类型,入学年份代码,资格状态,资格依据类型,资格依据说明
+导师：登录标识,工号,姓名,资格状态,资格依据类型,资格依据说明
 ```
 
-模板中的 `loginIdentifier` 与对应学生学号/导师工号必须相同；系统保留两列是为了让登录标识在导入结果中清晰可见，二者不一致的行会拒绝创建。
+模板中的“学位类型”可填写“学硕”/“专硕”或原英文枚举；“资格状态”可填写“具备资格”/“不具备资格”或 `ELIGIBLE`/`INELIGIBLE`，服务端转换为原有枚举；“资格依据类型”为非空来源说明。“登录标识”（旧版 `loginIdentifier`）与对应学生学号/导师工号必须相同；系统保留两列是为了让登录标识在导入结果中清晰可见，二者不一致的行会拒绝创建。
 
 学年和学院由上传请求参数指定，不可从表格扩展范围。上传接受 `.csv`、`.xlsx`，最大 10 MB、最多 2000 条数据行。表头不完全匹配时拒绝整份文件且不创建人员；通过表头校验后按物理行号逐行处理。每个成功行的账号、人员资料、学生初始分类（学生）和年度资格在一个独立事务提交；同一文件其他行失败不回滚已成功行。每行返回行号、学号/工号、状态、错误码/说明、人员 ID、资格 ID 和首次创建的登录标识/初始密码（分别取学号/工号末尾六位，较短编号完整使用）。凭证不设到期时间、仅能成功使用一次、首次登录强制改密，明文仅在创建成功的首次响应返回；导入源文件以随机存储键写入 Web 根目录外私有目录，并在 `managed_file` 保存文件摘要；历史导入行不保存密码或临时凭证明文。重复上传的同幂等键返回原任务和行状态，所有凭证字段为空。
 

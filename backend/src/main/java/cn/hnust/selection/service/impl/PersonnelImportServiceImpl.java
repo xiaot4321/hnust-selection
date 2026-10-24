@@ -49,7 +49,7 @@ import java.util.regex.Pattern;
  */
 @Service
 public class PersonnelImportServiceImpl implements PersonnelImportService {
-    private static final String TEMPLATE_VERSION = "1.0";
+    private static final String TEMPLATE_VERSION = "1.1";
     private static final int MAX_IMPORT_ROWS = 2000;
     private static final Pattern UUID_V4 = Pattern.compile(
         "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
@@ -57,6 +57,11 @@ public class PersonnelImportServiceImpl implements PersonnelImportService {
         "majorCode", "degreeType", "enrollmentYearCode", "eligibilityStatus", "evidenceType", "evidenceReference");
     private static final List<String> TEACHER_HEADERS = Arrays.asList("loginIdentifier", "employeeNo", "fullName",
         "eligibilityStatus", "evidenceType", "evidenceReference");
+
+    private static final List<String> STUDENT_CHINESE_HEADERS = Arrays.asList("登录标识", "学号", "姓名",
+        "专业代码", "学位类型", "入学年份代码", "资格状态", "资格依据类型", "资格依据说明");
+    private static final List<String> TEACHER_CHINESE_HEADERS = Arrays.asList("登录标识", "工号", "姓名",
+        "资格状态", "资格依据类型", "资格依据说明");
 
     private final PersonnelManagementRepository repository;
     private final PersonnelAccessService accessService;
@@ -81,7 +86,8 @@ public class PersonnelImportServiceImpl implements PersonnelImportService {
     @Transactional(readOnly = true)
     public String csvTemplate(AccountPrincipal actor, Long collegeId, String personType) {
         accessService.requireCollege(actor, collegeId);
-        return String.join(",", headers(personType)) + "\r\n";
+        headers(personType); // 保持人员类型校验。
+        return String.join(",", "STUDENT".equals(personType) ? STUDENT_CHINESE_HEADERS : TEACHER_CHINESE_HEADERS) + "\r\n";
     }
 
     /**
@@ -264,7 +270,9 @@ public class PersonnelImportServiceImpl implements PersonnelImportService {
             request.setFullName(values.get(2));
             request.setCollegeId(collegeId);
             request.setMajorCode(values.get(3));
-            request.setDegreeType(values.get(4));
+            String degree = values.get(4);
+            request.setDegreeType("学硕".equals(degree) ? "ACADEMIC_MASTER" :
+                "专硕".equals(degree) ? "PROFESSIONAL_MASTER" : degree);
             request.setEnrollmentYearCode(values.get(5));
             request.setClassificationBasis("名单导入：" + eligibility.sourceName);
             request.setClassificationReason("按学院管理员导入的年度人员名单建立初始分类");
@@ -285,9 +293,11 @@ public class PersonnelImportServiceImpl implements PersonnelImportService {
         int evidenceIndex = statusIndex + 1;
         int referenceIndex = statusIndex + 2;
         String status = values.get(statusIndex).toUpperCase(java.util.Locale.ROOT);
+        if ("具备资格".equals(status)) status = "ELIGIBLE";
+        if ("不具备资格".equals(status)) status = "INELIGIBLE";
         String evidence = values.get(evidenceIndex);
         if (!"ELIGIBLE".equals(status) && !"INELIGIBLE".equals(status)) {
-            throw rowFailure("ELIGIBILITY_STATUS_INVALID", "资格状态须填写 ELIGIBLE 或 INELIGIBLE");
+            throw rowFailure("ELIGIBILITY_STATUS_INVALID", "资格状态须填写“具备资格”或“不具备资格”（也支持 ELIGIBLE / INELIGIBLE）");
         }
         if (evidence.isEmpty()) {
             throw rowFailure("EVIDENCE_TYPE_REQUIRED", "资格依据类型不能为空");
@@ -348,7 +358,8 @@ public class PersonnelImportServiceImpl implements PersonnelImportService {
         while (!normalized.isEmpty() && normalized.get(normalized.size() - 1).isEmpty()) {
             normalized.remove(normalized.size() - 1);
         }
-        if (!expected.equals(normalized)) {
+        List<String> chineseHeaders = expected.equals(STUDENT_HEADERS) ? STUDENT_CHINESE_HEADERS : TEACHER_CHINESE_HEADERS;
+        if (!expected.equals(normalized) && !chineseHeaders.equals(normalized)) {
             throw invalid("名单表头与系统模板不一致，请下载最新固定模板后重新填写");
         }
     }

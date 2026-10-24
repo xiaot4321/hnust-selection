@@ -425,7 +425,7 @@ async function changePeoplePage(pageNo: number): Promise<void> {
 
       <div v-else class="personnel-section">
         <h4>导入学生或导师名单</h4>
-        <p class="personnel-help">下载固定 CSV 模板后，可用表格软件编辑并保存为 CSV 或 XLSX。登录标识列须与学号/工号相同；新建账号初始密码取对应编号末尾六位（不足六位时使用完整编号），最多 2000 行，单文件不超过 10 MB。</p>
+        <p class="personnel-help">下载固定 CSV 模板后，可用表格软件编辑并保存为 CSV 或 XLSX。登录标识列须与学号/工号相同；新建账号初始密码取对应编号末尾六位（不足六位时使用完整编号），最多 2000 行，单文件不超过 10 MB。模板表头为中文；学位类型填“学硕”或“专硕”，资格状态填“具备资格”或“不具备资格”，资格依据类型可填写“学校名单”等来源说明。专业代码请使用专业目录中的代码，学号、工号等编号列请设为文本，保留前导零。</p>
         <div class="personnel-form import-form">
           <label>人员类型<select v-model="importForm.personType"><option value="STUDENT">学生</option><option value="TEACHER">导师</option></select></label>
           <label>所属学年<select v-model.number="eligibilityYearId"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>

@@ -146,7 +146,7 @@ export const personnelManagementService = {
     const blob = await response.blob()
     const anchor = document.createElement('a')
     anchor.href = URL.createObjectURL(blob)
-    anchor.download = personType === 'STUDENT' ? 'student-personnel-template.csv' : 'teacher-personnel-template.csv'
+    anchor.download = personType === 'STUDENT' ? '学生名单导入模板.csv' : '导师名单导入模板.csv'
     anchor.click()
     window.setTimeout(() => URL.revokeObjectURL(anchor.href), 1000)
   },
