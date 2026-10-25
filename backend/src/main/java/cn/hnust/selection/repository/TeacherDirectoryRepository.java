@@ -59,6 +59,28 @@ public class TeacherDirectoryRepository {
         "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3))) " +
         "AND slot.frozen_at IS NOT NULL AND scope.frozen_at IS NOT NULL ";
 
+    private static final String PRE_FILLING_DEFAULT_SCOPE = "(scope.id IS NULL OR scope.allowed_degree_mask NOT IN (1, 2, 3) " +
+        "OR NOT EXISTS (SELECT 1 FROM teacher_allowed_major configured_major " +
+        "WHERE configured_major.scope_version_id = scope.id))";
+    private static final String PRE_FILLING_DEGREE_MASK = "(CASE WHEN " + PRE_FILLING_DEFAULT_SCOPE +
+        " THEN 3 ELSE scope.allowed_degree_mask END)";
+    private static final String PRE_FILLING_FROM_AND_WHERE = " FROM selection_batch batch " +
+        "JOIN batch_teacher_quota quota ON quota.batch_id = batch.id " +
+        "JOIN teacher ON teacher.id = quota.teacher_id AND teacher.college_id = batch.college_id " +
+        "JOIN college teacher_college ON teacher_college.id = teacher.college_id " +
+        "JOIN account teacher_account ON teacher_account.id = teacher.account_id " +
+        "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
+        "AND profile.teacher_id = teacher.id " +
+        "LEFT JOIN managed_file avatar ON avatar.id = profile.avatar_file_id AND avatar.owner_account_id = teacher.account_id " +
+        "AND avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' AND avatar.file_status = 'AVAILABLE' " +
+        "LEFT JOIN teacher_application_scope_slot slot ON slot.batch_id = batch.id AND slot.teacher_id = teacher.id " +
+        "LEFT JOIN teacher_application_scope_version scope ON scope.id = COALESCE(slot.scope_version_id, " +
+        "(SELECT scope_candidate.id FROM teacher_application_scope_version scope_candidate " +
+        "WHERE scope_candidate.batch_id = batch.id AND scope_candidate.teacher_id = teacher.id " +
+        "ORDER BY scope_candidate.version_no DESC LIMIT 1)) " +
+        "WHERE batch.id = ? AND batch.batch_status IN ('SCHEDULED', 'ACTIVE', 'PAUSED') " +
+        "AND teacher_account.account_status = 'ACTIVE' AND profile.published_at IS NOT NULL ";
+
     private final JdbcTemplate jdbcTemplate;
 
     public TeacherDirectoryRepository(JdbcTemplate jdbcTemplate) {
@@ -78,6 +100,116 @@ public class TeacherDirectoryRepository {
         return rows.isEmpty() ? Optional.<DirectoryContext>empty() : Optional.of(rows.get(0));
     }
 
+    public boolean isActiveStudent(Long studentId, Long accountId) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM student " +
+            "JOIN account ON account.id = student.account_id AND account.account_status = 'ACTIVE' " +
+            "WHERE student.id = ? AND student.account_id = ?", Integer.class, studentId, accountId);
+        return count != null && count.intValue() == 1;
+    }
+
+    /** 与具体批次无关的公开目录：仅列账号启用、资料已发布且至少一个学年当前资格有效的导师。 */
+    public List<TeacherRow> findQualifiedTeachers(String keyword, String researchDirection, int pageNo, int pageSize) {
+        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, college.name AS college_name, " +
+            "profile.research_directions, profile.biography, profile.education_experience, profile.work_experience, " +
+            "profile.courses, profile.research_and_achievements, avatar.storage_key AS avatar_storage_key " +
+            "FROM teacher JOIN college ON college.id = teacher.college_id " +
+            "JOIN account ON account.id = teacher.account_id AND account.account_status = 'ACTIVE' " +
+            "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
+            "AND profile.teacher_id = teacher.id AND profile.published_at IS NOT NULL " +
+            "LEFT JOIN managed_file avatar ON avatar.id = profile.avatar_file_id AND avatar.owner_account_id = teacher.account_id " +
+            "AND avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' AND avatar.file_status = 'AVAILABLE' " +
+            "WHERE EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
+            "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+            "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+            "WHERE eligibility_slot.teacher_id = teacher.id " +
+            "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3))) ");
+        List<Object> args = new ArrayList<Object>();
+        appendQualifiedFilters(sql, args, keyword, researchDirection);
+        sql.append(" ORDER BY college.name, teacher.full_name, teacher.employee_no, teacher.id LIMIT ? OFFSET ?");
+        args.add(Integer.valueOf(pageSize));
+        args.add(Long.valueOf(((long) pageNo - 1L) * pageSize));
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
+            rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"), rs.getString("college_name"),
+            rs.getString("research_directions"), rs.getString("biography"), Integer.valueOf(0), null, false,
+            rs.getString("education_experience"), rs.getString("work_experience"), rs.getString("courses"),
+            rs.getString("research_and_achievements"), rs.getString("avatar_storage_key")), args.toArray());
+    }
+
+    public long countQualifiedTeachers(String keyword, String researchDirection) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM teacher " +
+            "JOIN account ON account.id = teacher.account_id AND account.account_status = 'ACTIVE' " +
+            "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
+            "AND profile.teacher_id = teacher.id AND profile.published_at IS NOT NULL " +
+            "WHERE EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
+            "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+            "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+            "WHERE eligibility_slot.teacher_id = teacher.id " +
+            "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3))) ");
+        List<Object> args = new ArrayList<Object>();
+        appendQualifiedFilters(sql, args, keyword, researchDirection);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, args.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
+    public Optional<TeacherRow> findQualifiedTeacher(Long teacherId) {
+        List<TeacherRow> rows = jdbcTemplate.query("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, college.name AS college_name, " +
+                "profile.research_directions, profile.biography, profile.education_experience, profile.work_experience, " +
+                "profile.courses, profile.research_and_achievements, avatar.storage_key AS avatar_storage_key " +
+                "FROM teacher JOIN college ON college.id = teacher.college_id " +
+                "JOIN account ON account.id = teacher.account_id AND account.account_status = 'ACTIVE' " +
+                "JOIN teacher_public_profile_version profile ON profile.id = teacher.current_public_profile_version_id " +
+                "AND profile.teacher_id = teacher.id AND profile.published_at IS NOT NULL " +
+                "LEFT JOIN managed_file avatar ON avatar.id = profile.avatar_file_id AND avatar.owner_account_id = teacher.account_id " +
+                "AND avatar.purpose_code = 'TEACHER_PROFILE_AVATAR' AND avatar.file_status = 'AVAILABLE' " +
+                "WHERE teacher.id = ? AND EXISTS (SELECT 1 FROM annual_eligibility_slot eligibility_slot " +
+                "JOIN annual_eligibility eligibility ON eligibility.id = eligibility_slot.eligibility_id " +
+                "AND eligibility.eligibility_status = 'ELIGIBLE' AND eligibility.valid_to IS NULL " +
+                "WHERE eligibility_slot.teacher_id = teacher.id " +
+                "AND (eligibility.valid_from IS NULL OR eligibility.valid_from <= UTC_TIMESTAMP(3)))",
+            (rs, rowNum) -> new TeacherRow(rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
+                rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), Integer.valueOf(0), null,
+                false, rs.getString("education_experience"), rs.getString("work_experience"), rs.getString("courses"),
+                rs.getString("research_and_achievements"), rs.getString("avatar_storage_key")), teacherId);
+        return rows.isEmpty() ? Optional.<TeacherRow>empty() : Optional.of(rows.get(0));
+    }
+
+    private void appendQualifiedFilters(StringBuilder sql, List<Object> args, String keyword, String researchDirection) {
+        if (keyword != null && !keyword.isEmpty()) {
+            sql.append(" AND (teacher.full_name LIKE ? OR teacher.employee_no LIKE ?)");
+            String pattern = "%" + keyword + "%";
+            args.add(pattern);
+            args.add(pattern);
+        }
+        if (researchDirection != null && !researchDirection.isEmpty()) {
+            sql.append(" AND profile.research_directions LIKE ?");
+            args.add("%" + researchDirection + "%");
+        }
+    }
+
+    /** 填报阶段尚未开放时，导师目录以批次名额名单作为公开资料预览来源。 */
+    public boolean isBeforeFilling(Long batchId) {
+        Integer value = jdbcTemplate.queryForObject(
+            "SELECT CASE WHEN batch.batch_status = 'SCHEDULED' OR " +
+                "(batch.batch_status IN ('ACTIVE', 'PAUSED') AND stage.stage_code = 'FILLING' " +
+                "AND stage.stage_status IN ('NOT_STARTED', 'WAITING_FILLING')) THEN 1 ELSE 0 END " +
+                "FROM selection_batch batch LEFT JOIN batch_stage stage ON stage.id = batch.current_stage_id " +
+                "WHERE batch.id = ?",
+            Integer.class, batchId);
+        return value != null && value.intValue() == 1;
+    }
+
+    /** 第一轮处理尚未开始时，目录不强制按可报状态收窄。 */
+    public boolean isBeforeFirstRound(Long batchId) {
+        Integer value = jdbcTemplate.queryForObject(
+            "SELECT CASE WHEN batch.batch_status = 'SCHEDULED' OR " +
+                "(batch.batch_status IN ('ACTIVE', 'PAUSED') AND (stage.stage_code = 'FILLING' OR " +
+                "(stage.stage_code = 'ROUND_1' AND stage.stage_status IN ('NOT_STARTED', 'WAITING_FILLING')))) " +
+                "THEN 1 ELSE 0 END FROM selection_batch batch " +
+                "LEFT JOIN batch_stage stage ON stage.id = batch.current_stage_id WHERE batch.id = ?",
+            Integer.class, batchId);
+        return value != null && value.intValue() == 1;
+    }
+
     public List<TeacherRow> findTeachers(Long batchId, Long studentId, String keyword, String researchDirection,
         Long majorId, Integer degreeBit, Boolean canApply, int pageNo, int pageSize) {
         StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
@@ -95,6 +227,60 @@ public class TeacherDirectoryRepository {
             rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
             rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"), rs.getInt("allowed_degree_mask"),
             rs.getLong("scope_version_id"), rs.getBoolean("can_apply"), rs.getString("avatar_storage_key")), args.toArray());
+    }
+
+    public List<TeacherRow> findPreFillingTeachers(Long batchId, String keyword, String researchDirection,
+        Long majorId, Integer degreeBit, Boolean canApply, int pageNo, int pageSize) {
+        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
+            "profile.research_directions, profile.biography, avatar.storage_key AS avatar_storage_key, ")
+            .append(PRE_FILLING_DEGREE_MASK).append(" AS allowed_degree_mask, CASE WHEN ")
+            .append(PRE_FILLING_DEFAULT_SCOPE).append(" THEN 0 ELSE scope.id END AS scope_version_id, 0 AS can_apply")
+            .append(PRE_FILLING_FROM_AND_WHERE);
+        List<Object> args = new ArrayList<Object>();
+        args.add(batchId);
+        appendPreFillingFilters(sql, args, keyword, researchDirection, majorId, degreeBit, canApply);
+        sql.append(" ORDER BY teacher.full_name, teacher.employee_no, teacher.id LIMIT ? OFFSET ?");
+        args.add(Integer.valueOf(pageSize));
+        args.add(Long.valueOf(((long) pageNo - 1L) * pageSize));
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
+            rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
+            rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"),
+            rs.getInt("allowed_degree_mask"), rs.getLong("scope_version_id"), false,
+            rs.getString("avatar_storage_key")), args.toArray());
+    }
+
+    public long countPreFillingTeachers(Long batchId, String keyword, String researchDirection,
+        Long majorId, Integer degreeBit, Boolean canApply) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*)").append(PRE_FILLING_FROM_AND_WHERE);
+        List<Object> args = new ArrayList<Object>();
+        args.add(batchId);
+        appendPreFillingFilters(sql, args, keyword, researchDirection, majorId, degreeBit, canApply);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, args.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
+    public Optional<TeacherRow> findPreFillingTeacher(Long batchId, Long teacherId) {
+        StringBuilder sql = new StringBuilder("SELECT teacher.id AS teacher_id, teacher.employee_no, teacher.full_name, teacher_college.name AS college_name, " +
+            "profile.research_directions, profile.biography, profile.education_experience, profile.work_experience, " +
+            "profile.courses, profile.research_and_achievements, avatar.storage_key AS avatar_storage_key, ")
+            .append(PRE_FILLING_DEGREE_MASK).append(" AS allowed_degree_mask, CASE WHEN ")
+            .append(PRE_FILLING_DEFAULT_SCOPE).append(" THEN 0 ELSE scope.id END AS scope_version_id, 0 AS can_apply")
+            .append(PRE_FILLING_FROM_AND_WHERE).append(" AND teacher.id = ?");
+        List<TeacherRow> rows = jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TeacherRow(
+            rs.getLong("teacher_id"), rs.getString("employee_no"), rs.getString("full_name"),
+            rs.getString("college_name"), rs.getString("research_directions"), rs.getString("biography"),
+            rs.getInt("allowed_degree_mask"), rs.getLong("scope_version_id"), false,
+            rs.getString("education_experience"), rs.getString("work_experience"), rs.getString("courses"),
+            rs.getString("research_and_achievements"), rs.getString("avatar_storage_key")), batchId, teacherId);
+        return rows.isEmpty() ? Optional.<TeacherRow>empty() : Optional.of(rows.get(0));
+    }
+
+    /** 对未配置/不完整的范围显示当前专业目录预览；正式范围仍会在填报开放时冻结。 */
+    public List<AllowedMajorVO> findPreFillingDefaultMajors(Long batchId) {
+        return jdbcTemplate.query("SELECT major.id, major.major_code, major.name FROM selection_batch batch " +
+                "JOIN major ON major.college_id = batch.college_id AND major.is_active = TRUE " +
+                "WHERE batch.id = ? ORDER BY major.major_code, major.id",
+            (rs, rowNum) -> new AllowedMajorVO(rs.getLong("id"), rs.getString("major_code"), rs.getString("name")), batchId);
     }
 
     public long countTeachers(Long batchId, Long studentId, String keyword, String researchDirection,
@@ -179,6 +365,32 @@ public class TeacherDirectoryRepository {
         }
         if (canApply != null) {
             sql.append(" AND ").append(CAN_APPLY).append(canApply.booleanValue() ? " " : " = 0 ");
+        }
+    }
+
+    private void appendPreFillingFilters(StringBuilder sql, List<Object> args, String keyword, String researchDirection,
+        Long majorId, Integer degreeBit, Boolean canApply) {
+        if (keyword != null && !keyword.isEmpty()) {
+            sql.append(" AND teacher.full_name LIKE ?");
+            args.add("%" + keyword + "%");
+        }
+        if (researchDirection != null && !researchDirection.isEmpty()) {
+            sql.append(" AND profile.research_directions LIKE ?");
+            args.add("%" + researchDirection + "%");
+        }
+        if (majorId != null) {
+            sql.append(" AND (").append(PRE_FILLING_DEFAULT_SCOPE)
+                .append(" OR EXISTS (SELECT 1 FROM teacher_allowed_major filter_major " +
+                    "WHERE filter_major.scope_version_id = scope.id AND filter_major.major_id = ?))");
+            args.add(majorId);
+        }
+        if (degreeBit != null) {
+            sql.append(" AND (").append(PRE_FILLING_DEGREE_MASK).append(" & ?) <> 0");
+            args.add(degreeBit);
+        }
+        if (canApply != null) {
+            // Before filling opens, directory rows are previews and are never actionable.
+            sql.append(canApply.booleanValue() ? " AND 1 = 0 " : " AND 1 = 1 ");
         }
     }
 

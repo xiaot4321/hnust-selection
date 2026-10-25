@@ -6,6 +6,7 @@ public class TeacherDirectoryItemVO {
     private Long teacherId;
     private String employeeNo;
     private String displayName;
+    private String collegeName;
     private List<String> researchDirections;
     private String profileSummary;
     private List<String> allowedDegreeTypes;
@@ -20,6 +21,8 @@ public class TeacherDirectoryItemVO {
     public void setEmployeeNo(String employeeNo) { this.employeeNo = employeeNo; }
     public String getDisplayName() { return displayName; }
     public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public String getCollegeName() { return collegeName; }
+    public void setCollegeName(String collegeName) { this.collegeName = collegeName; }
     public List<String> getResearchDirections() { return researchDirections; }
     public void setResearchDirections(List<String> researchDirections) { this.researchDirections = researchDirections; }
     public String getProfileSummary() { return profileSummary; }

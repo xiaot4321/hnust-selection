@@ -25,7 +25,8 @@ export interface BatchRoundStatistics {
   notAdmittedCount: number; skippedStudentCount: number; cancelledApplicationCount: number
 }
 export interface BatchStatistics {
-  batchId: number; frozenDenominator: number | null; matchedCount: number; currentUnmatchedCount: number
+  batchId: number; frozenDenominator: number | null; submittedPreferenceStudentCount: number
+  matchedCount: number; currentUnmatchedCount: number
   normalPreferenceUnmatchedCount: number; notSubmittedCount: number; allRemainingPreferencesSkippedCount: number
   identityCorrectionUnmatchedCount: number; relationCorrectionUnmatchedCount: number; batchCancelledUnmatchedCount: number
   supplementAdmittedCount: number; supplementStillUnmatchedCount: number | null

@@ -150,36 +150,60 @@ public class TeacherWorkspaceRepository {
             teacherId, versionNo, directions, biography, educationExperience, workExperience, courses, researchAndAchievements, avatarFileId);
     }
 
-    public List<TeacherApplicationVO> listRoundApplications(Long teacherId, Long batchId, int roundNo, int pageNo, int pageSize) {
-        String sql = "SELECT application.id AS application_id, batch.id AS batch_id, batch.name AS batch_name, ? AS round_no, " +
-            "item.preference_order, snapshot.student_no, snapshot.full_name, snapshot.major_name_snapshot AS major_name, " +
-            "snapshot.degree_type, snapshot.biography, snapshot.resume_file_id, application.application_status, " +
+    public List<TeacherApplicationVO> listTeacherSelectedStudents(Long teacherId, Long batchId, int pageNo, int pageSize) {
+        String sql = "SELECT application.id AS application_id, batch.id AS batch_id, batch.name AS batch_name, " +
+            "item.preference_order AS round_no, item.preference_order, student.student_no, student.full_name, " +
+            "major.name AS major_name, item.degree_type, snapshot.biography, snapshot.resume_file_id, " +
+            "CASE WHEN application.id IS NOT NULL THEN application.application_status " +
+            "WHEN target_stage.stage_status = 'NOT_STARTED' THEN 'WAITING_FOR_ROUND' ELSE 'NOT_ENTERED' END AS application_status, " +
+            "CASE WHEN application.id IS NOT NULL AND application.application_status = 'IN_REVIEW' " +
+            "AND batch.batch_status = 'ACTIVE' AND batch.current_stage_id = target_stage.id " +
+            "AND target_stage.stage_status = 'OPEN' AND target_stage.effective_start_at <= UTC_TIMESTAMP(3) " +
+            "AND UTC_TIMESTAMP(3) < target_stage.effective_end_at THEN 1 ELSE 0 END AS can_decide, " +
             "DATE_FORMAT(application.entered_review_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS entered_review_at, " +
             "DATE_FORMAT(application.decided_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS processed_at " +
-            "FROM round_application application JOIN batch_stage stage ON stage.id = application.stage_id " +
-            "JOIN selection_batch batch ON batch.id = stage.batch_id JOIN preference_item item ON item.id = application.preference_item_id " +
-            "JOIN application_profile_snapshot snapshot ON snapshot.id = application.active_snapshot_id " +
-            "WHERE application.teacher_id = ? AND batch.id = ? AND stage.stage_code = ? " +
-            "ORDER BY application.entered_review_at, snapshot.student_no, application.id LIMIT ? OFFSET ?";
+            "FROM selection_batch batch JOIN batch_student participant ON participant.batch_id = batch.id " +
+            "JOIN preference_submission submission ON submission.id = participant.final_submission_id AND submission.locked_at IS NOT NULL " +
+            "JOIN preference_item item ON item.submission_id = submission.id " +
+            "JOIN batch_teacher_quota quota ON quota.id = item.batch_teacher_quota_id AND quota.teacher_id = ? " +
+            "JOIN student ON student.id = participant.student_id JOIN major ON major.id = item.major_id " +
+            "JOIN batch_stage target_stage ON target_stage.batch_id = batch.id " +
+            "AND target_stage.stage_code = CONCAT('ROUND_', item.preference_order) " +
+            "LEFT JOIN round_application application ON application.preference_item_id = item.id " +
+            "AND application.stage_id = target_stage.id AND application.teacher_id = quota.teacher_id " +
+            "LEFT JOIN application_profile_snapshot snapshot ON snapshot.id = application.active_snapshot_id " +
+            "WHERE batch.id = ? AND participant.preference_status = 'LOCKED' " +
+            "ORDER BY item.preference_order, submission.submitted_at, student.student_no, item.id LIMIT ? OFFSET ?";
         long offset = ((long) pageNo - 1L) * pageSize;
         return jdbc.query(sql, (rs, n) -> {
             TeacherApplicationVO value = new TeacherApplicationVO();
-            value.setApplicationId(rs.getLong("application_id")); value.setBatchId(rs.getLong("batch_id"));
+            long applicationId = rs.getLong("application_id");
+            value.setApplicationId(rs.wasNull() ? null : Long.valueOf(applicationId));
+            value.setBatchId(rs.getLong("batch_id"));
             value.setBatchName(rs.getString("batch_name")); value.setRoundNo(rs.getInt("round_no"));
             value.setPreferenceOrder(rs.getInt("preference_order")); value.setStudentNo(rs.getString("student_no"));
             value.setFullName(rs.getString("full_name")); value.setMajorName(rs.getString("major_name"));
             value.setDegreeType(rs.getString("degree_type")); value.setBiography(rs.getString("biography"));
             long fileId = rs.getLong("resume_file_id"); value.setResumeFileId(rs.wasNull() ? null : Long.valueOf(fileId));
             value.setStatus(rs.getString("application_status")); value.setEnteredReviewAt(rs.getString("entered_review_at"));
+            value.setCanDecide(rs.getBoolean("can_decide"));
             value.setProcessedAt(rs.getString("processed_at")); return value;
-        }, Integer.valueOf(roundNo), teacherId, batchId, "ROUND_" + roundNo, Integer.valueOf(pageSize), Long.valueOf(offset));
+        }, teacherId, batchId, Integer.valueOf(pageSize), Long.valueOf(offset));
     }
 
-    public long countRoundApplications(Long teacherId, Long batchId, int roundNo) {
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM round_application application " +
-            "JOIN batch_stage stage ON stage.id = application.stage_id WHERE application.teacher_id = ? " +
-            "AND stage.batch_id = ? AND stage.stage_code = ?", Long.class, teacherId, batchId, "ROUND_" + roundNo);
+    public long countTeacherSelectedStudents(Long teacherId, Long batchId) {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM batch_student participant " +
+            "JOIN preference_submission submission ON submission.id = participant.final_submission_id AND submission.locked_at IS NOT NULL " +
+            "JOIN preference_item item ON item.submission_id = submission.id " +
+            "JOIN batch_teacher_quota quota ON quota.id = item.batch_teacher_quota_id AND quota.teacher_id = ? " +
+            "WHERE participant.batch_id = ? AND participant.preference_status = 'LOCKED'", Long.class, teacherId, batchId);
         return count == null ? 0 : count.longValue();
+    }
+
+    public boolean isFillingClosed(Long batchId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM batch_stage WHERE batch_id = ? " +
+            "AND stage_code = 'FILLING' AND stage_status = 'CLOSED'", Integer.class, batchId);
+        return count != null && count.intValue() == 1;
     }
 
     public List<BulkSortItem> sortRoundBulkItems(Long teacherId, Long batchId, int roundNo, List<Long> applicationIds) {

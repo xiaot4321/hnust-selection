@@ -750,20 +750,11 @@ onMounted(loadColleges)
       <p v-if="!props.canManage" class="batch-readonly-note">当前是只读审计视图，可查看批次配置与统计；修改操作需要批次管理授权。</p>
 
       <div v-if="statistics" class="batch-statistics">
-        <div class="batch-subheading"><span>批次统计</span><small>分母取填报窗口开放时冻结的合格名单</small></div>
+        <div class="batch-subheading"><span>批次统计</span><small>总学生人数按填报窗口开放时冻结的合格名单统计</small></div>
         <div class="batch-stat-grid">
-          <div><span>冻结分母</span><strong>{{ statistics.frozenDenominator ?? '尚未冻结' }}</strong></div>
-          <div><span>已匹配</span><strong>{{ statistics.matchedCount }}</strong></div>
-          <div><span>当前未匹配</span><strong>{{ statistics.currentUnmatchedCount }}</strong></div>
-          <div><span>正常志愿未匹配</span><strong>{{ statistics.normalPreferenceUnmatchedCount }}</strong></div>
-          <div><span>未提交志愿</span><strong>{{ statistics.notSubmittedCount }}</strong></div>
-          <div><span>所有剩余志愿被跳过</span><strong>{{ statistics.allRemainingPreferencesSkippedCount }}</strong></div>
-          <div><span>身份纠错后未匹配</span><strong>{{ statistics.identityCorrectionUnmatchedCount }}</strong></div>
-          <div><span>关系撤销后未匹配</span><strong>{{ statistics.relationCorrectionUnmatchedCount }}</strong></div>
-          <div><span>取消批次未匹配</span><strong>{{ statistics.batchCancelledUnmatchedCount }}</strong></div>
-          <div><span>补选录取</span><strong>{{ statistics.supplementAdmittedCount }}</strong></div>
-          <div><span>补选结束后仍未匹配</span><strong>{{ statistics.supplementStillUnmatchedCount ?? '尚未结案' }}</strong></div>
-          <div><span>名额已用 / 总额</span><strong>{{ statistics.occupiedQuota }} / {{ statistics.quotaLimit }}</strong></div>
+          <div><span>已填报志愿的学生人数</span><strong>{{ statistics.submittedPreferenceStudentCount }}</strong></div>
+          <div><span>已选导师的学生人数</span><strong>{{ statistics.matchedCount }}</strong></div>
+          <div><span>总学生人数</span><strong>{{ statistics.frozenDenominator ?? '—' }}</strong></div>
         </div>
         <div class="batch-round-table-wrap">
           <table class="batch-quota-table batch-round-table">
@@ -844,7 +835,7 @@ onMounted(loadColleges)
 .batch-create-form,.batch-schedule-form,.batch-quota-section { margin-top: 22px; padding: 19px; border: 1px solid #dce4eb; border-radius: 10px; background: #fbfcfd; }
 .batch-statistics { margin-top: 22px; border: 1px solid #dce4eb; border-radius: 10px; background: #fbfcfd; overflow: hidden; }
 .batch-statistics>.batch-subheading { padding: 19px 19px 15px; }
-.batch-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid #e3e9ee; border-left: 1px solid #e3e9ee; }
+.batch-stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid #e3e9ee; border-left: 1px solid #e3e9ee; }
 .batch-stat-grid>div { display: grid; gap: 7px; min-height: 70px; align-content: center; padding: 11px 14px; border-right: 1px solid #e3e9ee; border-bottom: 1px solid #e3e9ee; background: #fff; }
 .batch-stat-grid span { color: #788899; font-size: .72rem; }
 .batch-stat-grid strong { color: #263f56; font-size: 1.12rem; font-variant-numeric: tabular-nums; }
@@ -925,7 +916,7 @@ onMounted(loadColleges)
 @media(max-width: 760px) {
   .batch-create-form { grid-template-columns: 1fr 1fr; }
   .supplement-teacher-grid { grid-template-columns:1fr; padding-left:0; padding-right:0; }
-  .batch-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .batch-stat-grid { grid-template-columns: 1fr; }
   .batch-phase-strip { grid-template-columns: 1fr 1fr; }
   .batch-phase:nth-child(2n) { border-right: 0; }
   .batch-schedule-head { display: none; }

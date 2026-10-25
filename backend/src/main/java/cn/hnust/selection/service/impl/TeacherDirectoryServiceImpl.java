@@ -45,16 +45,41 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
     public PageResult<TeacherDirectoryItemVO> list(AccountPrincipal actor, Long batchId, String keyword,
         String researchDirection, Boolean canApply, Long majorId, String degreeType, int pageNo, int pageSize) {
         Long studentId = requireStudent(actor);
-        validatePositive(batchId, "batchId");
         if (pageNo < 1 || pageSize < 1 || pageSize > 100) throw invalidArgument("分页参数超出范围");
         if (majorId != null) validatePositive(majorId, "majorId");
         String normalizedKeyword = normalizeFilter(keyword, "keyword");
         String normalizedDirection = normalizeFilter(researchDirection, "researchDirection");
         Integer degreeBit = degreeBit(degreeType);
+        if (batchId == null) {
+            requireActiveStudent(studentId, actor.getAccountId());
+            if (canApply != null || majorId != null || degreeBit != null) {
+                throw invalidArgument("专业、学位及可填报筛选需要指定互选批次");
+            }
+            List<TeacherRow> rows = repository.findQualifiedTeachers(normalizedKeyword, normalizedDirection, pageNo, pageSize);
+            List<Long> teacherIds = new ArrayList<Long>();
+            for (TeacherRow row : rows) teacherIds.add(row.getTeacherId());
+            Map<Long, TeacherOfficialProfileCacheEntity> officialByTeacher = officialProfileLookup.cachedProfiles(teacherIds);
+            List<TeacherDirectoryItemVO> items = new ArrayList<TeacherDirectoryItemVO>();
+            for (TeacherRow row : rows) {
+                TeacherOfficialProfileVO official = officialProfileLookup.cachedProfile(officialByTeacher.get(row.getTeacherId()),
+                    row.getFullName(), row.getCollegeName());
+                items.add(toItem(row, Collections.<AllowedMajorVO>emptyList(), official));
+            }
+            long total = repository.countQualifiedTeachers(normalizedKeyword, normalizedDirection);
+            return new PageResult<TeacherDirectoryItemVO>(items, total, pageNo, pageSize);
+        }
+        validatePositive(batchId, "batchId");
         requireContext(batchId, studentId);
 
-        List<TeacherRow> rows = repository.findTeachers(batchId, studentId, normalizedKeyword,
-            normalizedDirection, majorId, degreeBit, canApply, pageNo, pageSize);
+        boolean previewBeforeFilling = repository.isBeforeFilling(batchId);
+        boolean beforeFirstRound = repository.isBeforeFirstRound(batchId);
+        // 填报开放前预览批次名额名单；第一轮处理开始后目录只返回当前确实可报选的导师。
+        Boolean effectiveCanApply = beforeFirstRound ? canApply : Boolean.TRUE;
+        List<TeacherRow> rows = previewBeforeFilling
+            ? repository.findPreFillingTeachers(batchId, normalizedKeyword, normalizedDirection,
+                majorId, degreeBit, effectiveCanApply, pageNo, pageSize)
+            : repository.findTeachers(batchId, studentId, normalizedKeyword, normalizedDirection,
+                majorId, degreeBit, effectiveCanApply, pageNo, pageSize);
         List<Long> scopeIds = new ArrayList<Long>();
         List<Long> teacherIds = new ArrayList<Long>();
         for (TeacherRow row : rows) {
@@ -62,29 +87,63 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
             teacherIds.add(row.getTeacherId());
         }
         Map<Long, List<AllowedMajorVO>> majorsByScope = repository.findAllowedMajors(scopeIds);
+        List<AllowedMajorVO> previewDefaultMajors = previewBeforeFilling
+            ? repository.findPreFillingDefaultMajors(batchId) : Collections.<AllowedMajorVO>emptyList();
         Map<Long, TeacherOfficialProfileCacheEntity> officialByTeacher = officialProfileLookup.cachedProfiles(teacherIds);
         List<TeacherDirectoryItemVO> items = new ArrayList<TeacherDirectoryItemVO>();
         for (TeacherRow row : rows) {
             TeacherOfficialProfileVO official = officialProfileLookup.cachedProfile(officialByTeacher.get(row.getTeacherId()),
                 row.getFullName(), row.getCollegeName());
-            items.add(toItem(row, majorsByScope.get(row.getScopeVersionId()), official));
+            List<AllowedMajorVO> allowedMajors = majorsByScope.get(row.getScopeVersionId());
+            if (previewBeforeFilling && (allowedMajors == null || allowedMajors.isEmpty())) {
+                allowedMajors = previewDefaultMajors;
+            }
+            items.add(toItem(row, allowedMajors, official));
         }
-        long total = repository.countTeachers(batchId, studentId, normalizedKeyword,
-            normalizedDirection, majorId, degreeBit, canApply);
+        long total = previewBeforeFilling
+            ? repository.countPreFillingTeachers(batchId, normalizedKeyword, normalizedDirection,
+                majorId, degreeBit, effectiveCanApply)
+            : repository.countTeachers(batchId, studentId, normalizedKeyword,
+                normalizedDirection, majorId, degreeBit, effectiveCanApply);
         return new PageResult<TeacherDirectoryItemVO>(items, total, pageNo, pageSize);
     }
 
     @Override
     public TeacherDirectoryDetailVO get(AccountPrincipal actor, Long batchId, Long teacherId) {
         Long studentId = requireStudent(actor);
-        validatePositive(batchId, "batchId");
         validatePositive(teacherId, "teacherId");
+        if (batchId == null) {
+            requireActiveStudent(studentId, actor.getAccountId());
+            TeacherRow row = repository.findQualifiedTeacher(teacherId)
+                .orElseThrow(() -> notFound("未找到已获年度资格且资料已公开的导师"));
+            TeacherOfficialProfileVO official = officialProfileLookup.getOrRefresh(row.getTeacherId(), row.getFullName(), row.getCollegeName());
+            TeacherDirectoryDetailVO result = new TeacherDirectoryDetailVO();
+            copy(toItem(row, Collections.<AllowedMajorVO>emptyList(), official), result);
+            result.setBiography(firstNonBlank(row.getBiography(), official == null ? null : official.getBiography()));
+            result.setEducationExperience(firstNonBlank(row.getEducationExperience(), official == null ? null : official.getEducationExperience()));
+            result.setWorkExperience(firstNonBlank(row.getWorkExperience(), official == null ? null : official.getWorkExperience()));
+            result.setCourses(firstNonBlank(row.getCourses(), official == null ? null : official.getCourses()));
+            result.setResearchAndAchievements(firstNonBlank(row.getResearchAndAchievements(), official == null ? null : official.getResearchAndAchievements()));
+            return result;
+        }
+        validatePositive(batchId, "batchId");
         requireContext(batchId, studentId);
-        TeacherRow row = repository.findTeacher(batchId, studentId, teacherId)
+        boolean previewBeforeFilling = repository.isBeforeFilling(batchId);
+        boolean beforeFirstRound = repository.isBeforeFirstRound(batchId);
+        TeacherRow row = (previewBeforeFilling
+            ? repository.findPreFillingTeacher(batchId, teacherId)
+            : repository.findTeacher(batchId, studentId, teacherId))
             .orElseThrow(() -> notFound("未找到该批次可查看的导师资料"));
+        if (!beforeFirstRound && !row.isCanApply()) {
+            throw notFound("当前阶段只能查看本人可报选的导师资料");
+        }
         TeacherOfficialProfileVO official = officialProfileLookup.getOrRefresh(row.getTeacherId(), row.getFullName(), row.getCollegeName());
         TeacherDirectoryDetailVO result = new TeacherDirectoryDetailVO();
-        copy(toItem(row, repository.findAllowedMajors(row.getScopeVersionId()), official), result);
+        List<AllowedMajorVO> allowedMajors = repository.findAllowedMajors(row.getScopeVersionId());
+        if (previewBeforeFilling && allowedMajors.isEmpty()) {
+            allowedMajors = repository.findPreFillingDefaultMajors(batchId);
+        }
+        copy(toItem(row, allowedMajors, official), result);
         result.setBiography(firstNonBlank(row.getBiography(), official == null ? null : official.getBiography()));
         result.setEducationExperience(row.getEducationExperience());
         result.setWorkExperience(row.getWorkExperience());
@@ -112,6 +171,7 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
         result.setTeacherId(row.getTeacherId());
         result.setEmployeeNo(row.getEmployeeNo());
         result.setDisplayName(row.getFullName());
+        result.setCollegeName(row.getCollegeName());
         List<String> directions = splitDirections(row.getResearchDirections());
         if (directions.isEmpty() && official != null && official.getResearchDirections() != null) {
             directions = official.getResearchDirections();
@@ -191,6 +251,12 @@ public class TeacherDirectoryServiceImpl implements TeacherDirectoryService {
             throw new ApiException("FORBIDDEN", "仅学生可查看导师目录", HttpStatus.FORBIDDEN);
         }
         return actor.getIdentity().getId();
+    }
+
+    private void requireActiveStudent(Long studentId, Long accountId) {
+        if (!repository.isActiveStudent(studentId, accountId)) {
+            throw new ApiException("ACCOUNT_DISABLED", "学生账号当前不可用", HttpStatus.FORBIDDEN);
+        }
     }
 
     private static ApiException invalidArgument(String message) {

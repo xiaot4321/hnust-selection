@@ -51,13 +51,20 @@ const studentForm = reactive({
   enrollmentYearCode: '', classificationBasis: '', classificationReason: '',
 })
 const teacherForm = reactive({ employeeNo: '', fullName: '' })
-const majorForm = reactive({ majorCode: '', name: '', validFrom: '', validTo: '', changeBasis: '' })
+const majorForm = reactive({ majorCode: '', name: '', changeBasis: '' })
 const editingMajorId = ref<number | null>(null)
 const importForm = reactive({ personType: 'STUDENT' as 'STUDENT' | 'TEACHER' })
 
 const studentTotalPages = computed(() => Math.max(1, Math.ceil(studentTotal.value / pageSize)))
 const teacherTotalPages = computed(() => Math.max(1, Math.ceil(teacherTotal.value / pageSize)))
 const selectedCollegeName = computed(() => colleges.value.find((college) => college.id === collegeId.value)?.name ?? '')
+
+function onAcademicYearCreated(year: AcademicYearOption): void {
+  if (!years.value.some((item) => item.id === year.id)) {
+    years.value = [...years.value, year].sort((left, right) => right.yearCode.localeCompare(left.yearCode) || right.id - left.id)
+  }
+  eligibilityYearId.value = year.id
+}
 
 /** 共享加载状态使用计数，避免并发查询中较早结束的请求提前关闭加载提示。 */
 function beginLoading(): () => void {
@@ -146,7 +153,7 @@ watch(collegeId, (newCollegeId, previousCollegeId) => {
   years.value = []
   majors.value = []
   editingMajorId.value = null
-  Object.assign(majorForm, { majorCode: '', name: '', validFrom: '', validTo: '', changeBasis: '' })
+  Object.assign(majorForm, { majorCode: '', name: '', changeBasis: '' })
   void loadCollegeData()
 })
 onMounted(() => { void loadOptions() })
@@ -189,20 +196,23 @@ async function createTeacher(): Promise<void> {
 function editMajor(major: MajorRecord): void {
   editingMajorId.value = major.id
   Object.assign(majorForm, {
-    majorCode: major.majorCode, name: major.name, validFrom: major.validFrom ?? '',
-    validTo: major.validTo ?? '', changeBasis: '',
+    majorCode: major.majorCode, name: major.name, changeBasis: '',
   })
 }
 
 function clearMajorForm(): void {
   editingMajorId.value = null
-  Object.assign(majorForm, { majorCode: '', name: '', validFrom: '', validTo: '', changeBasis: '' })
+  Object.assign(majorForm, { majorCode: '', name: '', changeBasis: '' })
 }
 
 async function saveMajor(): Promise<void> {
   if (collegeId.value === null || saving.value) return
   resetMessages(); saving.value = true
-  const payload = { ...majorForm, collegeId: collegeId.value, active: true }
+  const currentMajor = editingMajorId.value === null ? null : majors.value.find(major => major.id === editingMajorId.value)
+  const payload = {
+    ...majorForm, collegeId: collegeId.value, active: true,
+    validFrom: currentMajor?.validFrom ?? null, validTo: currentMajor?.validTo ?? null,
+  }
   try {
     if (editingMajorId.value === null) await personnelManagementService.createMajor(payload)
     else await personnelManagementService.updateMajor(editingMajorId.value, payload)
@@ -408,19 +418,18 @@ async function changePeoplePage(pageNo: number): Promise<void> {
         <form class="personnel-form" @submit.prevent="saveMajor">
           <label>专业代码<input v-model="majorForm.majorCode" maxlength="32" :disabled="editingMajorId !== null" required /></label>
           <label>专业名称<input v-model="majorForm.name" maxlength="128" required /></label>
-          <label>生效日期<input v-model="majorForm.validFrom" type="date" /></label>
-          <label>失效日期<input v-model="majorForm.validTo" type="date" /></label>
+
           <label class="wide-field">维护依据<textarea v-model="majorForm.changeBasis" rows="2" required /></label>
           <div class="personnel-form-actions"><button class="personnel-primary" type="submit" :disabled="saving">{{ saving ? '正在保存…' : '保存专业目录' }}</button><button v-if="editingMajorId !== null" class="personnel-secondary" type="button" @click="clearMajorForm">取消编辑</button></div>
         </form>
-        <div class="personnel-table-wrap"><table><thead><tr><th>专业代码</th><th>专业名称</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
-          <tr v-for="major in majors" :key="major.id"><td>{{ major.majorCode }}</td><td>{{ major.name }}</td><td>{{ major.validFrom ?? '未设置' }} 至 {{ major.validTo ?? '未设置' }}</td><td>{{ major.active ? '启用' : '停用' }}</td><td class="table-actions"><button class="personnel-link" type="button" @click="editMajor(major)">编辑</button><button class="personnel-link" type="button" @click="toggleMajor(major)">{{ major.active ? '停用' : '启用' }}</button></td></tr>
-          <tr v-if="!majors.length"><td colspan="5" class="table-empty">尚无专业目录项，请先新增。</td></tr>
+        <div class="personnel-table-wrap"><table><thead><tr><th>专业代码</th><th>专业名称</th><th>状态</th><th>操作</th></tr></thead><tbody>
+          <tr v-for="major in majors" :key="major.id"><td>{{ major.majorCode }}</td><td>{{ major.name }}</td><td>{{ major.active ? '启用' : '停用' }}</td><td class="table-actions"><button class="personnel-link" type="button" @click="editMajor(major)">编辑</button><button class="personnel-link" type="button" @click="toggleMajor(major)">{{ major.active ? '停用' : '启用' }}</button></td></tr>
+          <tr v-if="!majors.length"><td colspan="4" class="table-empty">尚无专业目录项，请先新增。</td></tr>
         </tbody></table></div>
       </div>
 
       <div v-else-if="activeTab === 'eligibility'" class="personnel-section">
-        <StudentCohortEligibilityPanel v-if="collegeId !== null" :college-id="collegeId" :college-name="selectedCollegeName" :years="years" @busy="cohortBusy = $event" />
+        <StudentCohortEligibilityPanel v-if="collegeId !== null" :college-id="collegeId" :college-name="selectedCollegeName" :years="years" @busy="cohortBusy = $event" @academic-year-created="onAcademicYearCreated" />
       </div>
 
       <div v-else class="personnel-section">

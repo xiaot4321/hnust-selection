@@ -82,6 +82,10 @@ export const personnelManagementService = {
   academicYears(collegeId: number): Promise<AcademicYearOption[]> {
     return request(`/admin/personnel/academic-years?collegeId=${collegeId}`)
   },
+  createAcademicYear(payload: Record<string, unknown>): Promise<AcademicYearOption> {
+    const body = JSON.stringify(payload)
+    return mutate('POST /admin/personnel/academic-years ' + body, '/admin/personnel/academic-years', { method: 'POST', body })
+  },
   majors(collegeId: number, activeOnly = false): Promise<MajorRecord[]> {
     return request(`/admin/majors?collegeId=${collegeId}&activeOnly=${activeOnly}`)
   },

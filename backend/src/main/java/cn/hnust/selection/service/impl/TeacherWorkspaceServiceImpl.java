@@ -203,13 +203,12 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         validatePage(pageNo, pageSize);
         if (roundNo < 1 || roundNo > 3) throw invalid("轮次只能是 1、2 或 3");
         if (!repository.ownsBatch(teacherId, batchId)) throw notFound("未找到本人在该批次的业务范围");
-        StageContext stage = repository.findRoundStage(teacherId, batchId, roundNo).orElseThrow(() -> notFound("当前轮次不存在"));
-        Timestamp now = repository.databaseUtcNow();
-        if (!isOpen(stage.batchStatus, stage.currentStageId, stage.stageId, stage.stageStatus, stage.startAt, stage.endAt, now)) {
-            throw new ApiException("STATE_CONFLICT", "当前轮次未开放或已关闭", HttpStatus.CONFLICT);
+        repository.findRoundStage(teacherId, batchId, roundNo).orElseThrow(() -> notFound("当前轮次不存在"));
+        if (!repository.isFillingClosed(batchId)) {
+            return new PageResult<TeacherApplicationVO>(java.util.Collections.<TeacherApplicationVO>emptyList(), 0L, pageNo, pageSize);
         }
-        return new PageResult<TeacherApplicationVO>(repository.listRoundApplications(teacherId, batchId, roundNo, pageNo, pageSize),
-            repository.countRoundApplications(teacherId, batchId, roundNo), pageNo, pageSize);
+        return new PageResult<TeacherApplicationVO>(repository.listTeacherSelectedStudents(teacherId, batchId, pageNo, pageSize),
+            repository.countTeacherSelectedStudents(teacherId, batchId), pageNo, pageSize);
     }
 
     @Override

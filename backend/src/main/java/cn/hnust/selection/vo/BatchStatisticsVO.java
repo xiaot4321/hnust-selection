@@ -6,6 +6,7 @@ import java.util.List;
 public class BatchStatisticsVO {
     private final Long batchId;
     private final Long frozenDenominator;
+    private final long submittedPreferenceStudentCount;
     private final long matchedCount;
     private final long currentUnmatchedCount;
     private final long normalPreferenceUnmatchedCount;
@@ -20,13 +21,15 @@ public class BatchStatisticsVO {
     private final long occupiedQuota;
     private final List<RoundStatistics> rounds;
 
-    public BatchStatisticsVO(Long batchId, Long frozenDenominator, long matchedCount, long currentUnmatchedCount,
+    public BatchStatisticsVO(Long batchId, Long frozenDenominator, long submittedPreferenceStudentCount,
+        long matchedCount, long currentUnmatchedCount,
         long normalPreferenceUnmatchedCount, long notSubmittedCount, long allRemainingPreferencesSkippedCount,
         long identityCorrectionUnmatchedCount, long relationCorrectionUnmatchedCount,
         long batchCancelledUnmatchedCount, long supplementAdmittedCount, Long supplementStillUnmatchedCount,
         long quotaLimit, long occupiedQuota, List<RoundStatistics> rounds) {
         this.batchId = batchId;
         this.frozenDenominator = frozenDenominator;
+        this.submittedPreferenceStudentCount = submittedPreferenceStudentCount;
         this.matchedCount = matchedCount;
         this.currentUnmatchedCount = currentUnmatchedCount;
         this.normalPreferenceUnmatchedCount = normalPreferenceUnmatchedCount;
@@ -45,6 +48,8 @@ public class BatchStatisticsVO {
     public Long getBatchId() { return batchId; }
     /** Null until the eligibility roster was frozen at filling-window open. */
     public Long getFrozenDenominator() { return frozenDenominator; }
+    /** Number of batch students with a current submitted or locked preference set. */
+    public long getSubmittedPreferenceStudentCount() { return submittedPreferenceStudentCount; }
     public long getMatchedCount() { return matchedCount; }
     public long getCurrentUnmatchedCount() { return currentUnmatchedCount; }
     public long getNormalPreferenceUnmatchedCount() { return normalPreferenceUnmatchedCount; }

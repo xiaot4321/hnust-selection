@@ -77,6 +77,7 @@ export interface TeacherDirectoryItem {
   teacherId: number
   employeeNo: string
   displayName: string
+  collegeName: string
   researchDirections: string[]
   profileSummary: string
   allowedDegreeTypes: DegreeType[]
@@ -200,6 +201,8 @@ export interface StudentNotice {
   noticeId: number
   title: string
   content: string
+  senderName: string
+  senderRole: 'SYSTEM' | 'STUDENT' | 'TEACHER' | 'ADMIN'
   sentAt: string
   readAt: string | null
 }

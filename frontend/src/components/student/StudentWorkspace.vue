@@ -15,7 +15,7 @@ import {
   updateStudentProfile, uploadStudentResume, withdrawStudentPreferences,
 } from '../../services/studentPortalService'
 
-type Section = 'overview' | 'teachers' | 'preferences' | 'progress' | 'supplement' | 'profile' | 'notices'
+type Section = 'overview' | 'publicTeachers' | 'teachers' | 'preferences' | 'progress' | 'supplement' | 'profile' | 'notices'
 type TeacherProfileSection = {
   key: string
   title: string
@@ -25,6 +25,7 @@ type TeacherProfileSection = {
 }
 const sections: Array<{ key: Section; label: string }> = [
   { key: 'overview', label: '互选概览' },
+  { key: 'publicTeachers', label: '导师目录' },
   { key: 'preferences', label: '导师与志愿' },
   { key: 'progress', label: '进度与结果' },
   { key: 'supplement', label: '补选' },
@@ -55,12 +56,14 @@ const draftChanged = ref(false)
 const supplementApplications = ref<SupplementApplication[]>([])
 const correctionRequests = ref<IdentityCorrectionRequest[]>([])
 const notices = ref<StudentNotice[]>([])
+const selectedNotice = ref<StudentNotice | null>(null)
 const majors = ref<Array<{ majorId: number; majorCode: string; majorName: string }>>([])
 const teachers = ref<TeacherDirectoryItem[]>([])
 const teacherTotal = ref(0)
 const teacherPage = ref(1)
 const teacherDetail = ref<TeacherDetail | null>(null)
 const teacherDetailLoading = ref(false)
+let teacherDetailRequestNo = 0
 const identityChecked = ref(false)
 const profileForm = reactive({ biography: '', contact: '' })
 const correctionForm = reactive({ majorId: '', degreeType: '' as DegreeType | '', explanation: '' })
@@ -84,13 +87,13 @@ const canApplySupplement = computed(() => selectedBatch.value?.actions.canApplyS
 const pendingSupplement = computed(() => supplementApplications.value.some((item) => item.status === 'IN_REVIEW'))
 const unreadCount = computed(() => notices.value.filter((item) => !item.readAt).length)
 const teacherPageCount = computed(() => Math.max(1, Math.ceil(teacherTotal.value / 20)))
-const teacherDirectoryNotStarted = computed(() => {
+const teacherDirectoryBeforeFirstRound = computed(() => {
   const batch = selectedBatch.value
   if (!batch || ['CANCELLED', 'COMPLETED', 'ARCHIVED'].includes(batch.batchStatus)) return false
   if (batch.batchStatus === 'SCHEDULED') return true
-  return batch.batchStatus === 'ACTIVE'
-    && batch.currentStage?.stageCode === 'FILLING'
-    && ['NOT_STARTED', 'WAITING_FILLING'].includes(batch.currentStage.stageStatus)
+  return batch.currentStage?.stageCode === 'FILLING'
+    || (batch.currentStage?.stageCode === 'ROUND_1'
+      && ['NOT_STARTED', 'WAITING_FILLING'].includes(batch.currentStage.stageStatus))
 })
 const teacherProfileFacts = computed(() => {
   const profile = teacherDetail.value?.officialProfile
@@ -298,18 +301,32 @@ watch(selectedBatchId, (batchId) => {
   void loadBatch(batchId)
   if (activeSection.value === 'teachers' || (activeSection.value === 'preferences' && canEditPreferences.value)) void loadTeachers()
 })
+watch(() => {
+  const batch = selectedBatch.value
+  return [batch?.batchStatus, batch?.currentStage?.stageCode, batch?.currentStage?.stageStatus].join(':')
+}, () => {
+  if (activeSection.value === 'teachers') void loadTeachers()
+})
 watch(selectionUnavailable, (unavailable) => {
   if (!unavailable) return
-  teachers.value = []
-  teacherTotal.value = 0
+  if (activeSection.value !== 'publicTeachers') {
+    teachers.value = []
+    teacherTotal.value = 0
+  }
+  teacherDetailRequestNo += 1
   teacherDetail.value = null
+  teacherDetailLoading.value = false
   errorMessage.value = ''
   if (['teachers', 'preferences', 'supplement'].includes(activeSection.value)) activeSection.value = 'overview'
 })
 watch(activeSection, (section) => {
   errorMessage.value = ''
   successMessage.value = ''
-  if (section === 'teachers' || (section === 'preferences' && canEditPreferences.value)) void loadTeachers()
+  teacherDetailRequestNo += 1
+  teacherDetail.value = null
+  teacherDetailLoading.value = false
+  if (section === 'publicTeachers') teacherPage.value = 1
+  if (section === 'publicTeachers' || section === 'teachers' || (section === 'preferences' && canEditPreferences.value)) void loadTeachers()
 })
 
 function openSection(section: Section, mode: 'PREFERENCE' | 'SUPPLEMENT' = 'PREFERENCE'): void {
@@ -342,8 +359,27 @@ async function reloadBatches(silent = false): Promise<void> {
 
 async function loadTeachers(): Promise<void> {
   teacherQueryFailed.value = false
+  if (activeSection.value === 'publicTeachers') {
+    teacherLoading.value = true
+    try {
+      const response = await listTeachers({
+        keyword: teacherFilter.keyword.trim() || undefined,
+        researchDirection: teacherFilter.researchDirection.trim() || undefined,
+        pageNo: teacherPage.value,
+        pageSize: 20,
+      })
+      teachers.value = response.items
+      teacherTotal.value = response.total
+    } catch (error) {
+      teachers.value = []
+      teacherTotal.value = 0
+      teacherQueryFailed.value = true
+      errorMessage.value = errorText(error)
+    } finally { teacherLoading.value = false }
+    return
+  }
   if (!selectedBatchId.value) return
-  if (selectionUnavailable.value || teacherDirectoryNotStarted.value) {
+  if (selectionUnavailable.value) {
     teachers.value = []
     teacherTotal.value = 0
     return
@@ -359,7 +395,8 @@ async function loadTeachers(): Promise<void> {
       batchId: selectedBatchId.value,
       keyword: teacherFilter.keyword.trim() || undefined,
       researchDirection: teacherFilter.researchDirection.trim() || undefined,
-      canApply: activeSection.value === 'preferences' || directoryMode.value === 'SUPPLEMENT' || teacherFilter.onlyApplicable ? true : undefined,
+      canApply: activeSection.value === 'preferences' || directoryMode.value === 'SUPPLEMENT'
+        || !teacherDirectoryBeforeFirstRound.value || teacherFilter.onlyApplicable ? true : undefined,
       pageNo: teacherPage.value,
       pageSize: 20,
     })
@@ -383,17 +420,22 @@ function changeTeacherPage(page: number): void {
   void loadTeachers()
 }
 async function showTeacher(teacherId: number): Promise<void> {
-  if (!selectedBatchId.value || selectionUnavailable.value) return
+  const requestSection = activeSection.value
+  const publicDirectory = requestSection === 'publicTeachers'
+  if (!publicDirectory && (!selectedBatchId.value || selectionUnavailable.value)) return
+  const requestNo = ++teacherDetailRequestNo
   teacherDetailLoading.value = true
   try {
-    teacherDetail.value = await getTeacherDetail(teacherId, selectedBatchId.value)
+    const detail = await getTeacherDetail(teacherId, publicDirectory ? undefined : selectedBatchId.value!)
+    if (requestNo !== teacherDetailRequestNo || activeSection.value !== requestSection) return
+    teacherDetail.value = detail
     teachers.value = teachers.value.map((teacher) => teacher.teacherId === teacherId && teacherDetail.value
       ? { ...teacher, officialProfile: teacherDetail.value.officialProfile, researchDirections: teacherDetail.value.researchDirections,
           profileSummary: teacherDetail.value.profileSummary }
       : teacher)
   }
-  catch (error) { errorMessage.value = errorText(error) }
-  finally { teacherDetailLoading.value = false }
+  catch (error) { if (requestNo === teacherDetailRequestNo) errorMessage.value = errorText(error) }
+  finally { if (requestNo === teacherDetailRequestNo) teacherDetailLoading.value = false }
 }
 
 function addPreference(teacher: TeacherDirectoryItem): void {
@@ -573,6 +615,28 @@ async function markRead(notice: StudentNotice): Promise<void> {
   finally { updatingNoticeId.value = null }
 }
 
+function noticeSenderRoleLabel(role: StudentNotice['senderRole'] | null | undefined): string {
+  switch (role) {
+    case 'SYSTEM': return '系统'
+    case 'TEACHER': return '导师'
+    case 'STUDENT': return '学生'
+    case 'ADMIN': return '管理员'
+    default: return '来源未知'
+  }
+}
+
+function noticeSenderLabel(notice: StudentNotice): string {
+  const name = notice.senderName?.trim()
+  const role = noticeSenderRoleLabel(notice.senderRole)
+  if (name) return `${name} · ${role}`
+  return role === '系统' ? '互选系统' : `发送人信息待刷新 · ${role}`
+}
+
+function openNotice(notice: StudentNotice): void {
+  selectedNotice.value = notice
+  if (!notice.readAt && updatingNoticeId.value !== notice.noticeId) void markRead(notice)
+}
+
 function stageComplete(stageCode: string): boolean {
   if (!selectedBatch.value) return false
   if (['COMPLETED', 'ARCHIVED'].includes(selectedBatch.value.batchStatus)) return true
@@ -629,7 +693,7 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
 
     <template v-else>
       <nav v-if="!selectionUnavailable && (activeSection === 'teachers' || activeSection === 'preferences')" class="student-choice-navigation" aria-label="导师与志愿">
-        <button type="button" :class="{ active: activeSection === 'teachers' }" :aria-current="activeSection === 'teachers' ? 'page' : undefined" @click="openSection('teachers')">导师目录</button>
+        <button type="button" :class="{ active: activeSection === 'teachers' }" :aria-current="activeSection === 'teachers' ? 'page' : undefined" @click="openSection('teachers')">本批次导师</button>
         <button type="button" :class="{ active: activeSection === 'preferences' }" :aria-current="activeSection === 'preferences' ? 'page' : undefined" @click="openSection('preferences')">我的志愿</button>
       </nav>
 
@@ -642,6 +706,34 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
           <button class="student-button" type="button" :disabled="refreshingBatches" @click="reloadBatches()">{{ refreshingBatches ? '正在刷新…' : '刷新批次' }}</button>
           <button v-if="selectedBatch" class="student-button secondary" type="button" @click="openSection('progress')">查看历史结果</button>
           <button class="student-button primary" type="button" @click="openSection('profile')">查看个人资料</button>
+        </div>
+      </section>
+      <section v-else-if="activeSection === 'publicTeachers'" class="student-section">
+        <div class="section-title-row">
+          <div><p class="section-kicker">独立于互选批次</p><h3>导师目录</h3><p class="section-copy">查看至少一个学年当前具备年度资格、账号正常且公开资料已审核的导师。批次志愿页会按该批次的可填报条件另行筛选。</p></div>
+        </div>
+        <form class="teacher-filters" @submit.prevent="searchTeachers">
+          <label><span>导师姓名或工号</span><input v-model="teacherFilter.keyword" type="search" placeholder="输入姓名或工号" /></label>
+          <label><span>研究方向</span><input v-model="teacherFilter.researchDirection" type="search" placeholder="输入研究方向" /></label>
+          <button class="student-button secondary" type="submit" :disabled="teacherLoading">{{ teacherLoading ? '正在查询…' : '筛选导师' }}</button>
+        </form>
+        <div v-if="teacherLoading && !teachers.length" class="student-loading compact"><span class="loading-mark"></span><p>正在读取导师目录</p></div>
+        <p v-else-if="!teacherLoading && !teachers.length && !teacherQueryFailed" class="empty-note">当前没有年度资格有效且公开资料已审核的导师。</p>
+        <div v-else-if="teachers.length" class="teacher-list">
+          <article v-for="teacher in teachers" :key="teacher.teacherId" class="teacher-row">
+            <span class="teacher-initial" aria-hidden="true"><span>{{ teacher.displayName.slice(0, 1) }}</span><img v-if="teacher.avatarUrl || teacher.officialProfile?.photoUrl" :src="teacher.avatarUrl || teacher.officialProfile?.photoUrl || ''" :alt="teacher.displayName + '照片'" @error="hideTeacherPhoto" /></span>
+            <div class="teacher-main">
+              <div class="teacher-name-line"><h4>{{ teacher.displayName }}</h4><span>{{ teacher.collegeName }}</span><span class="fillable-tag">已获年度资格</span></div>
+              <p class="teacher-directions">{{ teacher.researchDirections.join(' / ') || '研究方向待完善' }}</p>
+              <p class="teacher-summary">{{ teacher.profileSummary || '暂无个人简介。' }}</p>
+            </div>
+            <div class="teacher-actions"><button class="quiet-button" type="button" @click="showTeacher(teacher.teacherId)">查看详情</button></div>
+          </article>
+        </div>
+        <div v-if="teacherTotal > 20" class="pagination-row">
+          <button class="quiet-button" type="button" :disabled="teacherPage <= 1" @click="changeTeacherPage(teacherPage - 1)">上一页</button>
+          <span>第 {{ teacherPage }} / {{ teacherPageCount }} 页，共 {{ teacherTotal }} 位导师</span>
+          <button class="quiet-button" type="button" :disabled="teacherPage >= teacherPageCount" @click="changeTeacherPage(teacherPage + 1)">下一页</button>
         </div>
       </section>
       <section v-else-if="activeSection === 'overview'" class="student-section">
@@ -719,9 +811,9 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
                 <button class="quiet-button" type="button" @click="openSection('notices')">全部通知</button>
               </div>
               <p v-if="!notices.length" class="empty-note">暂无站内通知。</p>
-              <button v-for="notice in notices.slice(0, 2)" :key="notice.noticeId" class="notice-preview-row" type="button" @click="openSection('notices')">
+              <button v-for="notice in notices.slice(0, 2)" :key="notice.noticeId" class="notice-preview-row" type="button" @click="openNotice(notice)">
                 <span class="notice-dot" :class="{ unread: !notice.readAt }"></span>
-                <span><strong>{{ notice.title }}</strong><small>{{ formatTime(notice.sentAt) }}</small></span>
+                <span><strong>{{ notice.title }}</strong><small>{{ noticeSenderLabel(notice) }} · {{ formatTime(notice.sentAt) }}</small></span>
               </button>
             </article>
           </div>
@@ -730,18 +822,17 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
 
       <section v-else-if="activeSection === 'teachers'" class="student-section">
         <div class="section-title-row">
-          <div><p class="section-kicker">浏览与比较</p><h3>{{ directoryMode === 'SUPPLEMENT' ? '选择补选导师' : '导师目录' }}</h3><p class="section-copy">查看公开资料和本人的可填报状态。目录不显示导师剩余名额。</p></div>
+          <div><p class="section-kicker">浏览与比较</p><h3>{{ directoryMode === 'SUPPLEMENT' ? '选择补选导师' : '导师目录' }}</h3><p class="section-copy">{{ teacherDirectoryBeforeFirstRound ? '第一轮处理开始前可查看本批次全部公开导师；开始后仅显示本人当前可报选的导师。' : '仅显示本人当前可报选的导师。目录不显示导师剩余名额。' }}</p></div>
         </div>
         <form class="teacher-filters" @submit.prevent="searchTeachers">
-          <label><span>导师姓名</span><input v-model="teacherFilter.keyword" type="search" placeholder="输入导师姓名" :disabled="teacherDirectoryNotStarted" /></label>
-          <label><span>研究方向</span><input v-model="teacherFilter.researchDirection" type="search" placeholder="输入研究方向" :disabled="teacherDirectoryNotStarted" /></label>
-          <label v-if="directoryMode === 'PREFERENCE'" class="filter-check"><input v-model="teacherFilter.onlyApplicable" type="checkbox" :disabled="teacherDirectoryNotStarted" /><span>只看可填报导师</span></label>
-          <button class="student-button secondary" type="submit" :disabled="teacherLoading || !selectedBatch || teacherDirectoryNotStarted">{{ teacherLoading ? '正在查询…' : '筛选导师' }}</button>
+          <label><span>导师姓名</span><input v-model="teacherFilter.keyword" type="search" placeholder="输入导师姓名" :disabled="selectionUnavailable" /></label>
+          <label><span>研究方向</span><input v-model="teacherFilter.researchDirection" type="search" placeholder="输入研究方向" :disabled="selectionUnavailable" /></label>
+          <label v-if="directoryMode === 'PREFERENCE' && teacherDirectoryBeforeFirstRound" class="filter-check"><input v-model="teacherFilter.onlyApplicable" type="checkbox" :disabled="!canEditPreferences" /><span>只看可填报导师</span></label>
+          <button class="student-button secondary" type="submit" :disabled="teacherLoading || !selectedBatch || selectionUnavailable">{{ teacherLoading ? '正在查询…' : '筛选导师' }}</button>
         </form>
         <p v-if="!selectedBatch" class="empty-note">当前没有可查询的互选批次。</p>
         <div v-else-if="teacherLoading && !teachers.length" class="student-loading compact"><span class="loading-mark"></span><p>正在读取导师目录</p></div>
-        <p v-else-if="teacherDirectoryNotStarted" class="empty-note">该批次尚未开始，导师目录将在填报阶段开放后显示。</p>
-        <p v-else-if="!teacherLoading && !teachers.length && !teacherQueryFailed" class="empty-note">没有符合当前筛选条件的导师。</p>
+        <p v-else-if="!teacherLoading && !teachers.length && !teacherQueryFailed" class="empty-note">{{ teacherDirectoryBeforeFirstRound ? '当前批次暂无已配置且资料已公开的导师。' : '当前阶段没有符合本人条件且可报选的导师。' }}</p>
         <div v-else class="teacher-list">
           <article v-for="teacher in teachers" :key="teacher.teacherId" class="teacher-row">
             <span class="teacher-initial" aria-hidden="true"><span>{{ teacher.displayName.slice(0, 1) }}</span><img v-if="teacher.avatarUrl || teacher.officialProfile?.photoUrl" :src="teacher.avatarUrl || teacher.officialProfile?.photoUrl || ''" :alt="teacher.displayName + '照片'" @error="hideTeacherPhoto" /></span>
@@ -1006,9 +1097,14 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
         <div v-if="notices.length" class="notice-list">
           <article v-for="notice in notices" :key="notice.noticeId" class="notice-item" :class="{ unread: !notice.readAt }">
             <span class="notice-dot" :class="{ unread: !notice.readAt }"></span>
-            <div class="notice-copy"><div><h4>{{ notice.title }}</h4><time>{{ formatTime(notice.sentAt) }}</time></div><p>{{ notice.content }}</p></div>
-            <button v-if="!notice.readAt" class="quiet-button" type="button" :disabled="updatingNoticeId === notice.noticeId" @click="markRead(notice)">{{ updatingNoticeId === notice.noticeId ? '正在更新…' : '标为已读' }}</button>
-            <span v-else class="read-label">已读</span>
+            <div class="notice-copy">
+              <div><button class="notice-title-button" type="button" @click="openNotice(notice)"><h4>{{ notice.title }}</h4></button><time>{{ formatTime(notice.sentAt) }}</time></div>
+              <p class="notice-sender">通知人：{{ noticeSenderLabel(notice) }}</p>
+              <p class="notice-preview-content">{{ notice.content }}</p>
+            </div>
+            <button class="quiet-button" type="button" @click="openNotice(notice)">查看</button>
+            <span v-if="notice.readAt" class="read-label">已读</span>
+            <span v-else-if="updatingNoticeId === notice.noticeId" class="read-label">正在更新…</span>
           </article>
         </div>
         <p v-else class="empty-note">暂无站内通知。</p>
@@ -1028,7 +1124,7 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
               <p class="teacher-profile-eyebrow">{{ teacherDetail.officialProfile ? '湖南科技大学 · 学校主页档案' : '湖南科技大学师生互选 · 导师公开资料' }}</p>
               <h3 id="teacher-detail-title">{{ teacherDetail.displayName }}</h3>
               <p class="teacher-detail-title">{{ [teacherDetail.officialProfile?.professionalTitle, teacherDetail.officialProfile?.department].filter(Boolean).join('　·　') || '导师' }}</p>
-              <span class="teacher-profile-eligibility" :class="{ 'is-unavailable': !teacherDetail.canApply }">{{ teacherDetail.canApply ? '本批次可填报' : '本批次暂不可填报' }}</span>
+              <span class="teacher-profile-eligibility" :class="{ 'is-unavailable': activeSection !== 'publicTeachers' && !teacherDetail.canApply }">{{ activeSection === 'publicTeachers' ? '已获年度资格' : teacherDetail.canApply ? '本批次可填报' : '本批次暂不可填报' }}</span>
             </div>
           </header>
 
@@ -1038,7 +1134,7 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
 
           <aside v-if="!teacherProfileSections.length && !teacherProfileFacts.length" class="teacher-profile-empty-state">
             <strong>暂无导师简介</strong>
-            <p>当前尚未获取到个人简介或经核验的学校主页资料；页面仅展示系统中已有的研究方向和本批次招生范围，不会填入虚构内容。</p>
+            <p>{{ activeSection === 'publicTeachers' ? '当前尚未获取到个人简介或经核验的学校主页资料；页面只展示系统中已有的公开信息，不会填入虚构内容。' : '当前尚未获取到个人简介或经核验的学校主页资料；页面仅展示系统中已有的研究方向和本批次招生范围，不会填入虚构内容。' }}</p>
           </aside>
 
           <section v-for="(section, index) in teacherProfileSections" :key="section.key" class="teacher-detail-section">
@@ -1055,7 +1151,10 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
             </div>
           </section>
 
-          <section class="teacher-admission-scope">
+          <section v-if="activeSection === 'publicTeachers'" class="teacher-admission-scope">
+            <div><p class="teacher-scope-label">年度资格说明</p><p>导师至少一个学年的当前年度资格有效。具体批次是否可报，还需根据批次名额、招生范围和本人身份判断。</p></div>
+          </section>
+          <section v-else class="teacher-admission-scope">
             <div><p class="teacher-scope-label">本批次招生范围</p><div class="teacher-scope">
               <span v-for="degree in teacherDetail.allowedDegreeTypes" :key="degree">{{ degree === 'ACADEMIC_MASTER' ? '学硕' : '专硕' }}</span>
               <span v-for="major in teacherDetail.allowedMajors" :key="major.majorId">{{ major.majorName }}</span>
@@ -1069,6 +1168,20 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
           </footer>
           <footer v-else class="teacher-profile-attribution">尚未获取到经核验的学校主页资料；当前展示系统审核通过的公开资料。</footer>
         </template>
+      </section>
+    </div>
+
+    <div v-if="selectedNotice" class="notice-detail-backdrop" @click.self="selectedNotice = null">
+      <section class="notice-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="notice-detail-title">
+        <button class="detail-close" type="button" aria-label="关闭通知详情" @click="selectedNotice = null">×</button>
+        <p class="section-kicker">站内通知详情</p>
+        <h3 id="notice-detail-title">{{ selectedNotice.title }}</h3>
+        <dl class="notice-detail-meta">
+          <div><dt>通知人</dt><dd>{{ noticeSenderLabel(selectedNotice) }}</dd></div>
+          <div><dt>发送时间</dt><dd>{{ formatTime(selectedNotice.sentAt) }}</dd></div>
+          <div><dt>状态</dt><dd>{{ selectedNotice.readAt ? '已读' : '未读' }}</dd></div>
+        </dl>
+        <div class="notice-detail-content">{{ selectedNotice.content }}</div>
       </section>
     </div>
   </section>
@@ -1610,8 +1723,21 @@ onUnmounted(() => { if (batchRefreshTimer) clearInterval(batchRefreshTimer) })
 .notice-copy { min-width: 0; flex: 1; }
 .notice-copy > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .notice-copy h4 { margin: 0; color: var(--student-blue); font-size: 12px; }
+.notice-title-button { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.notice-title-button:hover h4 { text-decoration: underline; }
 .notice-copy time, .read-label { color: var(--student-faint); font-size: 9px; }
 .notice-copy p { margin: 7px 0 0; color: var(--student-muted); font-size: 11px; line-height: 1.8; white-space: pre-wrap; }
+.notice-copy .notice-sender { color: var(--student-blue-mid); font-size: 10px; }
+.notice-copy .notice-preview-content { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
+
+.notice-detail-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(30, 47, 54, .36); }
+.notice-detail-dialog { position: relative; width: min(100%, 560px); max-height: 82vh; overflow: auto; padding: 30px; border-top: 4px solid var(--student-blue-mid); background: #fff; box-shadow: 0 24px 70px rgba(25, 47, 58, .21); }
+.notice-detail-dialog h3 { margin: 8px 44px 18px 0; color: var(--student-blue); font-size: 23px; }
+.notice-detail-meta { display: grid; gap: 11px; margin: 0 0 20px; padding: 15px 0; border-top: 1px solid var(--student-line); border-bottom: 1px solid var(--student-line); }
+.notice-detail-meta div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; }
+.notice-detail-meta dt { color: var(--student-faint); font-size: 11px; }
+.notice-detail-meta dd { margin: 0; color: var(--student-ink); font-size: 12px; }
+.notice-detail-content { padding: 16px; background: #f6f9fa; color: var(--student-ink); font-size: 13px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .detail-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(30, 47, 54, .36); }
 .teacher-detail { position: relative; width: min(100%, 920px); max-height: 92vh; overflow: auto; padding: 40px clamp(24px, 5vw, 64px) 30px; border-top: 5px solid var(--student-blue-mid); background: #fff; box-shadow: 0 24px 70px rgba(25, 47, 58, .21); }

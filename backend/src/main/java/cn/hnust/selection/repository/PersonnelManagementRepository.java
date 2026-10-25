@@ -60,6 +60,22 @@ public class PersonnelManagementRepository {
                 rs.getString("display_name")));
     }
 
+    public Optional<AcademicYearEntity> findAcademicYearByCode(String yearCode) {
+        try {
+            return Optional.of(jdbc.queryForObject(
+                "SELECT id, year_code, display_name FROM academic_year WHERE year_code = ?",
+                (rs, row) -> new AcademicYearEntity(rs.getLong("id"), rs.getString("year_code"),
+                    rs.getString("display_name")), yearCode));
+        } catch (EmptyResultDataAccessException exception) {
+            return Optional.empty();
+        }
+    }
+
+    public Long insertAcademicYear(String yearCode, String displayName) {
+        return insert("INSERT INTO academic_year (year_code, display_name) VALUES (?, ?)",
+            "academic_year", yearCode, displayName);
+    }
+
     public boolean academicYearExists(Long id) {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM academic_year WHERE id = ?", Integer.class, id);
         return count != null && count.intValue() > 0;

@@ -71,7 +71,8 @@ const roundOpeningText = computed(() => {
   return `${prefix}开放时间：${format(round.opensAt)}`
 })
 const allNoticeCandidates = computed(() => [
-  ...applications.value.map((item) => ({ key: `ROUND:${item.applicationId}`, type: 'ROUND' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
+  ...applications.value.filter((item) => item.applicationId !== null)
+    .map((item) => ({ key: `ROUND:${item.applicationId}`, type: 'ROUND' as const, id: item.applicationId as number, name: item.fullName, no: item.studentNo })),
   ...supplements.value.map((item) => ({ key: `SUPPLEMENT:${item.applicationId}`, type: 'SUPPLEMENT' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
 ])
 const reviewLabel = computed(() => ({
@@ -91,7 +92,12 @@ function formatTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value))
 }
 function degreeLabel(value: string): string { return value === 'ACADEMIC_MASTER' ? '学硕' : value === 'PROFESSIONAL_MASTER' ? '专硕' : value }
-function statusLabel(value: string): string { return value === 'IN_REVIEW' ? '待处理' : value === 'ADMITTED' ? '已录取' : value === 'NOT_ADMITTED' || value === 'REJECTED' ? '未录取' : value }
+function statusLabel(value: string): string {
+  return ({
+    IN_REVIEW: '待处理', ADMITTED: '已录取', NOT_ADMITTED: '未录取', REJECTED: '未录取',
+    WAITING_FOR_ROUND: '等待对应轮次', NOT_ENTERED: '尚未进入本轮处理',
+  } as Record<string, string>)[value] ?? value
+}
 
 function discardAvatarPreview(): void {
   if (avatarPreviewUrl.value) URL.revokeObjectURL(avatarPreviewUrl.value)
@@ -147,14 +153,19 @@ async function loadSummary(): Promise<void> {
     if (selectedBatchId.value === batchId) { summary.value = null; errorMessage.value = messageFor(error) }
   }
 }
-async function loadRound(): Promise<void> {
+async function loadRound(preserveSelection = false): Promise<void> {
   if (!selectedBatchId.value) { applications.value = []; selectedRoundIds.value = []; return }
-  loading.value = true; errorMessage.value = ''; successMessage.value = ''
+  loading.value = true
+  if (!preserveSelection) { errorMessage.value = ''; successMessage.value = '' }
   try {
     const page = await teacherWorkspaceService.rounds(selectedBatchId.value, roundNo.value)
     applications.value = page.items
-    selectedRoundIds.value = []
-    if (page.total > page.items.length) successMessage.value = `当前显示 ${page.items.length} 条申请，共 ${page.total} 条。`
+    selectedRoundIds.value = preserveSelection
+      ? page.items.filter((item) => item.applicationId !== null && selectedRoundIds.value.includes(item.applicationId) &&
+        item.canDecide && item.preferenceOrder === roundNo.value && item.status === 'IN_REVIEW')
+        .map((item) => item.applicationId as number)
+      : []
+    if (!preserveSelection && page.total > page.items.length) successMessage.value = `当前显示 ${page.items.length} 名选过本人的学生，共 ${page.total} 名。`
   } catch (error) { applications.value = []; errorMessage.value = messageFor(error) }
   finally { loading.value = false }
 }
@@ -167,15 +178,16 @@ async function loadSupplements(): Promise<void> {
 }
 
 async function decideRound(item: TeacherApplication, decision: 'ADMIT' | 'NOT_ADMITTED'): Promise<void> {
-  if (!selectedBatchId.value || busyApplications.value.has(`ROUND:${item.applicationId}`)) return
-  const key = `ROUND:${item.applicationId}`
+  if (!selectedBatchId.value || item.applicationId === null || !item.canDecide || item.preferenceOrder !== roundNo.value || busyApplications.value.has(`ROUND:${item.applicationId}`)) return
+  const applicationId = item.applicationId
+  const key = `ROUND:${applicationId}`
   busyApplications.value = new Set(busyApplications.value).add(key)
   errorMessage.value = ''; successMessage.value = ''
   try {
-    const result = await teacherWorkspaceService.decideRound(selectedBatchId.value, item, decision)
+    const result = await teacherWorkspaceService.decideRound(selectedBatchId.value, { ...item, applicationId }, decision)
     item.status = result.status
     item.processedAt = result.processedAt
-    selectedRoundIds.value = selectedRoundIds.value.filter((id) => id !== item.applicationId)
+    selectedRoundIds.value = selectedRoundIds.value.filter((id) => id !== applicationId)
     successMessage.value = decision === 'ADMIT' ? `${item.fullName} 已录取，师生关系已锁定。` : `已记录对 ${item.fullName} 的不录取决定。`
     await loadSummary()
   } catch (error) { errorMessage.value = messageFor(error); await loadSummary() }
@@ -201,12 +213,13 @@ function toggleSelected(ids: number[], target: number, update: (next: number[]) 
 }
 async function decideSelectedRound(decision: 'ADMIT' | 'NOT_ADMITTED'): Promise<void> {
   if (!selectedBatchId.value || bulkBusy.value) return
-  const selected = applications.value.filter((item) => selectedRoundIds.value.includes(item.applicationId) && item.status === 'IN_REVIEW')
+  const selected = applications.value.filter((item) => item.applicationId !== null && selectedRoundIds.value.includes(item.applicationId) &&
+    item.canDecide && item.preferenceOrder === roundNo.value && item.status === 'IN_REVIEW')
   if (!selected.length) return
   bulkBusy.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
     const accepted = await teacherWorkspaceService.decideRoundBatch(selectedBatchId.value, roundNo.value,
-      selected.map((item) => ({ applicationId: item.applicationId, decision })))
+      selected.map((item) => ({ applicationId: item.applicationId as number, decision })))
     const operation = await teacherWorkspaceService.waitForOperation(accepted.operationId)
     let admitted = 0; let failed = 0
     for (const itemResult of operation.items) {
@@ -326,7 +339,7 @@ watch(roundNo, () => { if (section.value === 'applications') void Promise.all([l
 onMounted(async () => {
   scheduleTimer = window.setInterval(() => {
     clockNow.value = Date.now()
-    if (!document.hidden && section.value === 'applications') void loadSummary()
+    if (!document.hidden && section.value === 'applications') void Promise.all([loadSummary(), loadRound(true)])
   }, 15000)
   await Promise.all([loadBatches(), loadProfile()])
 })
@@ -355,24 +368,25 @@ onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(sc
       <p v-if="currentBatch" class="teacher-round-opening" role="status">{{ roundOpeningText }}</p>
       <div class="teacher-panel-heading">
         <div><h3 id="round-applications-heading">常规轮次申请</h3>
-          <p>每轮只处理对应顺位投向本人的申请；导师决定不排序，录取成功后立即锁定关系。</p></div>
+          <p>填报截止后可查看所有选过本人的学生及其志愿顺位；只有进入对应开放轮次的申请可以处理，录取成功后立即锁定关系。</p></div>
         <div class="round-selector" aria-label="选择轮次">
           <button v-for="number in [1, 2, 3]" :key="number" type="button" :class="{ active: roundNo === number }" @click="roundNo = number">第 {{ number }} 轮</button>
         </div>
       </div>
       <p v-if="!currentBatch" class="teacher-empty">当前没有关联导师名额的批次。</p>
       <div v-else-if="applications.length" class="teacher-application-list">
-        <article v-for="item in applications" :key="item.applicationId" class="teacher-application-card" :class="{ selectable: item.status === 'IN_REVIEW' }">
-          <label v-if="item.status === 'IN_REVIEW'" class="teacher-select-application" :aria-label="`选择 ${item.fullName}`"><input type="checkbox" :checked="selectedRoundIds.includes(item.applicationId)" :disabled="bulkBusy" @change="toggleSelected(selectedRoundIds, item.applicationId, (next) => selectedRoundIds = next)" /></label>
+        <article v-for="item in applications" :key="`${item.studentNo}:${item.preferenceOrder}`" class="teacher-application-card" :class="{ selectable: item.canDecide && item.preferenceOrder === roundNo }">
+          <label v-if="item.canDecide && item.preferenceOrder === roundNo && item.applicationId !== null" class="teacher-select-application" :aria-label="`选择 ${item.fullName}`"><input type="checkbox" :checked="selectedRoundIds.includes(item.applicationId)" :disabled="bulkBusy" @change="toggleSelected(selectedRoundIds, item.applicationId, (next) => selectedRoundIds = next)" /></label>
           <div class="teacher-student-avatar">{{ item.fullName.slice(0, 1) }}</div>
           <div class="teacher-application-body">
             <div class="teacher-application-title"><div><h4>{{ item.fullName }}</h4><span>{{ item.studentNo }} · {{ item.majorName }} · {{ degreeLabel(item.degreeType) }}</span></div>
               <span class="teacher-status" :class="item.status.toLowerCase()">{{ statusLabel(item.status) }}</span></div>
-            <p class="teacher-biography">{{ item.biography || '学生暂未填写个人简介。' }}</p>
-            <div class="teacher-application-meta"><span>第 {{ item.preferenceOrder }} 志愿</span><span>进入本轮 {{ formatTime(item.enteredReviewAt) }}</span>
+            <p v-if="item.applicationId !== null" class="teacher-biography">{{ item.biography || '学生暂未填写个人简介。' }}</p>
+            <p v-else class="teacher-biography teacher-application-locked-note">该志愿尚未进入对应处理轮次，申请资料将在进入轮次后提供。</p>
+            <div class="teacher-application-meta"><span>第 {{ item.preferenceOrder }} 志愿</span><span v-if="item.enteredReviewAt">进入本轮 {{ formatTime(item.enteredReviewAt) }}</span><span v-else>尚未进入处理</span>
               <a v-if="item.resumeFileId" :href="`/api/files/${item.resumeFileId}/content`" target="_blank" rel="noreferrer">查看简历</a>
             </div>
-            <div v-if="item.status === 'IN_REVIEW'" class="teacher-decision-actions">
+            <div v-if="item.canDecide && item.preferenceOrder === roundNo && item.applicationId !== null && item.status === 'IN_REVIEW'" class="teacher-decision-actions">
               <button class="teacher-admit-button" type="button" :disabled="busyApplications.has(`ROUND:${item.applicationId}`)" @click="decideRound(item, 'ADMIT')">录取并锁定</button>
               <button class="teacher-reject-button" type="button" :disabled="busyApplications.has(`ROUND:${item.applicationId}`)" @click="decideRound(item, 'NOT_ADMITTED')">不录取</button>
             </div>
@@ -380,7 +394,7 @@ onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(sc
         </article>
       </div>
       <div v-if="selectedRoundIds.length" class="teacher-bulk-actions"><span>已选择 {{ selectedRoundIds.length }} 项</span><button class="teacher-admit-button" type="button" :disabled="bulkBusy" @click="decideSelectedRound('ADMIT')">{{ bulkBusy ? '处理中…' : '批量录取所选' }}</button><button class="teacher-reject-button" type="button" :disabled="bulkBusy" @click="decideSelectedRound('NOT_ADMITTED')">批量不录取</button></div>
-      <div v-else-if="!applications.length" class="teacher-empty"><strong>{{ loading ? '正在读取申请…' : '当前轮暂时没有申请' }}</strong><span>填报阶段不会显示志愿；轮次开启后，只有投向本人的对应顺位申请会出现在这里。</span></div>
+      <div v-else-if="!applications.length" class="teacher-empty"><strong>{{ loading ? '正在读取学生名单…' : '暂无已锁定并选择本人的学生' }}</strong><span>填报阶段名单保密。填报截止后，所有选择了本人的学生都会显示在这里；办理操作只会在对应轮次开放时出现。</span></div>
       <div v-if="allNoticeCandidates.length" class="teacher-message-box">
         <div><h3>联系申请学生</h3><p>收件人由所选申请自动确定，不能填写其他学生或账号。</p></div>
         <fieldset class="teacher-message-recipients"><legend>收件学生</legend>

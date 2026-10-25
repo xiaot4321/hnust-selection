@@ -1,6 +1,7 @@
 package cn.hnust.selection.service;
 
 import cn.hnust.selection.security.AccountPrincipal;
+import cn.hnust.selection.request.CreateAcademicYearRequest;
 import cn.hnust.selection.request.CreateMajorRequest;
 import cn.hnust.selection.request.CreateStudentRequest;
 import cn.hnust.selection.request.CreateTeacherRequest;
@@ -27,6 +28,8 @@ public interface PersonnelManagementService {
     List<MajorVO> listPublicMajors(Long collegeId);
 
     List<AcademicYearOptionVO> listAcademicYears(AccountPrincipal actor, Long collegeId);
+
+    AcademicYearOptionVO createAcademicYear(AccountPrincipal actor, CreateAcademicYearRequest request, String idempotencyKey);
 
     List<MajorVO> listMajors(AccountPrincipal actor, Long collegeId, Boolean activeOnly);
 

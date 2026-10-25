@@ -9,3 +9,8 @@
 Thumbs.db
 frontend/.env*
 !frontend/.env.example
+.env
+.env.*
+!.env.example
+deploy/certs/
+deploy/backups/

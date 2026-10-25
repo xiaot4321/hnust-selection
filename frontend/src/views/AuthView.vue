@@ -81,7 +81,7 @@ const workspaceTitle = computed(() => ({
 
 const routeTitle = computed(() => {
   if (activeRoute.value === 'workspace') return user.value ? workspaceTitle.value : '账号登录'
-  if (activeRoute.value === 'home' && user.value) return workspaceTitle.value
+  if (activeRoute.value === 'home') return user.value ? workspaceTitle.value : '账号登录'
   return typeof route.meta.title === 'string' ? route.meta.title : '系统首页'
 })
 
@@ -307,25 +307,10 @@ onMounted(loadSession)
     <div class="portal-main">
       <header class="portal-topline">
         <div class="breadcrumb"><span>湖南科技大学</span><i>/</i><span>师生互选系统</span></div>
-        <RouterLink v-if="!user && !loading" class="header-login-link" :to="{ name: 'workspace' }">进入系统 <span aria-hidden="true">→</span></RouterLink>
       </header>
 
-      <!-- 标题区说明系统用途；互选步骤与已确认的业务流程保持一致。 -->
-      <section v-if="!user && activeRoute === 'home'" id="page-home" class="portal-hero" aria-labelledby="page-title">
-        <p class="hero-eyebrow">研究生教育 · 师生互选服务</p>
-        <h1 id="page-title">师生互选系统</h1>
-        <p class="hero-description">学生按志愿选择导师，导师分轮处理申请，录取后关系即时锁定。</p>
-        <div class="hero-roles" aria-label="师生互选流程">
-          <span><b>1</b> 学生填报志愿</span>
-          <i aria-hidden="true"></i>
-          <span><b>2</b> 导师逐项处理</span>
-          <i aria-hidden="true"></i>
-          <span><b>3</b> 录取关系锁定</span>
-        </div>
-      </section>
-
-      <main class="content-area" :class="{ 'guest-content-area': !user && !loading && activeRoute === 'home', 'guide-content-area': activeRoute === 'guide' }">
-        <section v-if="activeRoute !== 'guide'" id="account-area" class="account-section" :aria-labelledby="user ? undefined : 'account-section-title'" :aria-label="user ? '用户工作区' : undefined">
+      <main class="content-area" :class="{ 'guide-content-area': activeRoute === 'guide' }">
+        <section v-if="activeRoute !== 'guide'" id="account-area" class="account-section" :aria-labelledby="!user ? 'account-section-title' : undefined" :aria-label="user ? '用户工作区' : undefined">
           <div v-if="!user" class="section-heading">
             <div>
               <p class="section-eyebrow">用户中心</p>
@@ -479,9 +464,9 @@ onMounted(loadSession)
           <!-- 未登录时显示表单；表单只收集凭证，角色由服务端账号记录决定。 -->
           <ForgotPasswordPanel v-else-if="forgotPasswordOpen" @close="forgotPasswordOpen = false" />
           <section v-else class="auth-card login-card" aria-labelledby="login-title">
-            <div class="card-kicker">校园统一服务入口</div>
+            <div class="card-kicker">统一身份认证</div>
             <h2 id="login-title">欢迎登录</h2>
-            <p class="card-description">请输入管理员分配的登录标识和密码。</p>
+            <p class="card-description">请使用本人账号和密码登录。</p>
             <form class="form-stack" @submit.prevent="login">
               <label for="login-identifier">登录标识</label>
               <input id="login-identifier" v-model="loginForm.loginIdentifier" type="text" autocomplete="username" placeholder="学号、工号或管理员账号" maxlength="128" required />
@@ -489,7 +474,7 @@ onMounted(loadSession)
               <input id="login-password" v-model="loginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码" maxlength="128" required />
               <p v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</p>
               <button class="primary-button" type="submit" :disabled="submitting">
-                {{ submitting ? '正在验证…' : '登录系统' }}
+                {{ submitting ? '正在验证…' : '登录' }}
                 <span aria-hidden="true">→</span>
               </button>
             </form>

@@ -5,6 +5,8 @@ public class StudentNoticeVO {
     private Long noticeId;
     private String title;
     private String content;
+    private String senderName;
+    private String senderRole;
     private String sentAt;
     private String readAt;
 
@@ -14,6 +16,10 @@ public class StudentNoticeVO {
     public void setTitle(String title) { this.title = title; }
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+    public String getSenderName() { return senderName; }
+    public void setSenderName(String senderName) { this.senderName = senderName; }
+    public String getSenderRole() { return senderRole; }
+    public void setSenderRole(String senderRole) { this.senderRole = senderRole; }
     public String getSentAt() { return sentAt; }
     public void setSentAt(String sentAt) { this.sentAt = sentAt; }
     public String getReadAt() { return readAt; }

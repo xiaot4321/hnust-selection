@@ -1,6 +1,6 @@
 package cn.hnust.selection.vo;
 
-/** 导师当前业务申请列表项；字段严格限于申请快照允许公开的资料。 */
+/** 导师本人锁定志愿名单行；未进入处理轮次时不包含申请资料快照字段。 */
 public class TeacherApplicationVO {
     private Long applicationId;
     private Long batchId;
@@ -14,6 +14,7 @@ public class TeacherApplicationVO {
     private String biography;
     private Long resumeFileId;
     private String status;
+    private boolean canDecide;
     private String enteredReviewAt;
     private String processedAt;
 
@@ -41,6 +42,8 @@ public class TeacherApplicationVO {
     public void setResumeFileId(Long resumeFileId) { this.resumeFileId = resumeFileId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public boolean isCanDecide() { return canDecide; }
+    public void setCanDecide(boolean canDecide) { this.canDecide = canDecide; }
     public String getEnteredReviewAt() { return enteredReviewAt; }
     public void setEnteredReviewAt(String enteredReviewAt) { this.enteredReviewAt = enteredReviewAt; }
     public String getProcessedAt() { return processedAt; }
