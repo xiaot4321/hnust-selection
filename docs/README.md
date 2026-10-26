@@ -8,14 +8,14 @@ Linux Docker Compose、新库初始化、首个总管理员和 IP HTTPS 部署�
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| [总体需求](../requirements.md) | 范围、角色、流程、功能、共性约束和决策索引 | 0.41 导师通知发送人识别 |
-| [分轮业务规则](business-rules.md) | 已确认匹配规则、例外处理及冲突记录 | 0.28 导师消息发送人回溯 |
+| [总体需求](../requirements.md) | 范围、角色、流程、功能、共性约束和决策索引 | 0.42 导师资料即时公开 |
+| [分轮业务规则](business-rules.md) | 已确认匹配规则、例外处理及冲突记录 | 0.29 导师资料即时公开 |
 | [状态机设计](state-machine.md) | 批次、阶段、志愿、学生状态、申请和关系状态 | 0.14 常规关系恢复与改派边界 |
-| [权限矩阵](permission-matrix.md) | 角色权限、数据范围、敏感字段访问 | 2.5 通知发送人信息 |
-| [用户故事](user-stories.md) | 角色场景、验收目标和实现/验证状态 | 3.1 导师通知发送人识别 |
-| [待确认事项登记表](todo-register.md) | 待确认事项与已确认决策的统一登记，含数据设计输入约束 | 3.12 决策记录；TODO-49 特殊边界暂缓，TODO-64/66/67 已被 TODO-68 取代，TODO-65 待确认 |
-| [逻辑数据模型](logical-data-model.md) | 核心实体关系图、属性、唯一性、状态归属、事务、历史与访问边界 | 0.18 导师志愿可见范围 |
-| [物理数据库设计与数据字典](database-design.md) | 逻辑实体到 MySQL/InnoDB 表的映射、字段类型、约束、索引和事务并发设计 | 1.4 导师公开资料头像引用；目标 MySQL 5.7.36 |
+| [权限矩阵](permission-matrix.md) | 角色权限、数据范围、敏感字段访问 | 2.6 导师资料即时公开 |
+| [用户故事](user-stories.md) | 角色场景、验收目标和实现/验证状态 | 3.2 导师资料即时公开 |
+| [待确认事项登记表](todo-register.md) | 待确认事项与已确认决策的统一登记，含数据设计输入约束 | 3.13 决策记录；TODO-49 特殊边界暂缓，TODO-61 审核由 TODO-74 取代，TODO-65 待确认 |
+| [逻辑数据模型](logical-data-model.md) | 核心实体关系图、属性、唯一性、状态归属、事务、历史与访问边界 | 0.19 导师资料即时发布 |
+| [物理数据库设计与数据字典](database-design.md) | 逻辑实体到 MySQL/InnoDB 表的映射、字段类型、约束、索引和事务并发设计 | 1.5 导师公开资料免审核；目标 MySQL 5.7.36 |
 | [MySQL 5.7.36 完整建库 DDL](../sql/mysql57/schema.sql) | 54 张表、主键、唯一键、索引及 168 个外键的首次建库脚本 | 包含导师公开资料缓存及历史批次参与授权表；本机验证库现为 54/168；历史授权表不参与当前业务 |
 | [MySQL 前向迁移](../sql/mysql57/migrations/20261003_personnel_management_v1.sql) | 为旧版本机验证库添加资格唯一当前槽位、导入关联及总管理员人员能力 | 2026-10-03 本机结构变更已应用；不得对已迁移库重跑完整迁移 |
 | [人员管理迁移恢复脚本](../sql/mysql57/migrations/20261003_personnel_management_v1_recovery.sql) | 修复本机迁移中因 MySQL 会话字符集导致失败的总管理员授权及审计记录 | 2026-10-03 本机恢复成功；授权和审计各写入一行；脚本可重复执行，仅适用于已部分应用 v1 结构的验证库 |
@@ -27,19 +27,20 @@ Linux Docker Compose、新库初始化、首个总管理员和 IP HTTPS 部署�
 | [批次参与授权回滚脚本](../sql/mysql57/migrations/20261008_batch_participant_authorization_v1_rollback.sql) | 删除批次学生和常规导师参与授权表 | 仅为原迁移历史提供；会删除两表全部数据，本次决策不执行 |
 | [导师公开资料栏目迁移](../sql/mysql57/migrations/20261008_teacher_public_profile_fields_v1.sql) | 为资料版本表增加学习/工作经历、课程、科研与成果 | 2026-10-08 备份后已应用到本机验证库，核验仍为 54/167、四列存在；其他环境执行前核对结构、备份和回滚 |
 | [导师公开头像迁移](../sql/mysql57/migrations/20261008_teacher_public_profile_avatar_v1.sql) | 为资料版本增加 `managed_file` 头像引用 | 2026-10-09 备份后已应用到本机验证库；核验 54/168、头像列和外键存在；迁移不删除 OSS 对象 |
-| [功能模块设计](functional-modules.md) | 学生、导师、管理端功能清单、模块职责、数据归属、模块协作及当前代码入口 | 0.27 导师通知发送人识别 |
-| [API 设计](api-design.md) | 端点目录、请求/响应契约、错误码、认证授权、幂等和并发语义 | 2.10 导师消息发送人回溯；TODO-65 待确认 |
+| [导师资料即时公开数据迁移](../sql/mysql57/migrations/20261026_teacher_profile_direct_publication_v1.sql) | 将既有待审核资料发布，并更新导师当前公开版本指针；不改表结构 | 已准备，尚未执行；执行前备份，回滚须在应用恢复前完成 |
+| [功能模块设计](functional-modules.md) | 学生、导师、管理端功能清单、模块职责、数据归属、模块协作及当前代码入口 | 0.28 导师资料即时公开 |
+| [API 设计](api-design.md) | 端点目录、请求/响应契约、错误码、认证授权、幂等和并发语义 | 2.11 导师公开资料免审核；TODO-65 待确认 |
 | [邮箱绑定与密码找回](email-recovery.md) | 师生邮箱验证、找回密码接口、安全限制和 SMTP 部署要求 | 师生自助流程已接入；管理员代重置师生凭证的范围仍待 TODO-65 确认 |
 
 ## 当前代码实现状态
 
-根目录 [README](../README.md) 提供本机运行方法；`backend/` 是 Spring Boot 后端，`frontend/` 是 Vue + TypeScript + Vite 前端。下表是截至 2026-10-25 对当前工作树的代码入口盘点。“已接入”表示相应 HTTP/API、业务服务和页面入口可在代码中定位；它不等同于端到端验收通过、生产部署完成或所有规则边界都已实现。
+根目录 [README](../README.md) 提供本机运行方法；`backend/` 是 Spring Boot 后端，`frontend/` 是 Vue + TypeScript + Vite 前端。下表是截至 2026-10-26 对当前工作树的代码入口盘点。“已接入”表示相应 HTTP/API、业务服务和页面入口可在代码中定位；它不等同于端到端验收通过、生产部署完成或所有规则边界都已实现。
 
 | 使用方 | 当前已接入的主要能力 | 主要代码入口（按任务从入口继续追调用链） |
 |---|---|---|
 | 学生 | 无批次限制的年度资格公开导师目录；本人批次/进度/志愿历史和结果查询；身份确认；1–3 位有序志愿提交、撤回与历史；批次内直接浏览并选择本人当前可报导师，查看官方公开资料缓存及来源；补选申请；本人资料/简历；身份更正申请；可查看发送人及详情的站内通知；邮箱绑定与邮件验证码找回密码。服务端写操作处理本人身份、批次阶段、幂等、分类版本和冻结范围校验。 | 后端 `TeacherDirectoryController`、`TeacherDirectoryServiceImpl`、`OfficialFacultyProfileLookupService`、`NoticeController`、`EmailRecoveryController`；前端 `StudentWorkspace.vue`、`EmailSecurityPanel.vue`、`ForgotPasswordPanel.vue` 和对应 `services/`。 |
-| 导师 | 本人公开头像及六项文字资料可随时编辑；头像存 OSS 私有对象并与公开资料同版审核；待审核时可更新同一版本，管理员审核旧 ETag 自动失效；招生范围配置；填报截止后查看所有选择本人的学生和本人顺位，只有对应开放轮次可以处理；常规轮次和补选队列；逐项与异步批量决定；本人名额/匹配关系查询；站内联系；授权范围内受控简历读取；邮箱绑定与邮件验证码找回密码。 | 后端 `TeacherWorkspaceController`、`TeacherWorkspaceServiceImpl`、`TeacherApplicationScopeController`、`EmailRecoveryController`；前端 `TeacherWorkspace.vue`、`EmailSecurityPanel.vue`、`ForgotPasswordPanel.vue` 和对应 `services/`。 |
-| 管理员 | 学生/导师人员及年度资格关键词筛选、多选和批量保存、名单导入；管理员能力授权；学生身份纠错；导师资料审核；批次草稿、排期、发布、生命周期、导师范围/名额、轮次延期/重开和补选排期；关系查询及撤销/恢复/改派；冻结统计、审计和异步导出；`BATCH_AUDIT` 只读范围。发布无需批次参与授权名单；补选导师候选按资格、公开资料、名额和冻结范围自动计算。 | 后端 `PersonnelManagementController`、`AdminIdentityCorrectionController`、`AdminTeacherProfileReviewController`、`SelectionBatchManagementController`、`AdminRelationAdjustmentController`、`AdminExportController`；前端 `components/admin/` 与 `services/` 对应模块。 |
+| 导师 | 本人公开头像及六项文字资料可随时编辑并即时公开；头像存 OSS 私有对象并与文字同事务发布；招生范围配置；填报截止后查看所有选择本人的学生和本人顺位，只有对应开放轮次可以处理；常规轮次和补选队列；逐项与异步批量决定；本人名额/匹配关系查询；站内联系；授权范围内受控简历读取；邮箱绑定与邮件验证码找回密码。 | 后端 `TeacherWorkspaceController`、`TeacherWorkspaceServiceImpl`、`TeacherApplicationScopeController`、`EmailRecoveryController`；前端 `TeacherWorkspace.vue`、`EmailSecurityPanel.vue`、`ForgotPasswordPanel.vue` 和对应 `services/`。 |
+| 管理员 | 学生/导师人员及年度资格关键词筛选、多选和批量保存、名单导入；管理员能力授权；学生身份纠错；批次草稿、排期、发布、生命周期、导师范围/名额、轮次延期/重开和补选排期；关系查询及撤销/恢复/改派；冻结统计、审计和异步导出；`BATCH_AUDIT` 只读范围。导师资料无需管理员审核。发布无需批次参与授权名单；补选导师候选按资格、公开资料、名额和冻结范围自动计算。 | 后端 `PersonnelManagementController`、`AdminIdentityCorrectionController`、`SelectionBatchManagementController`、`AdminRelationAdjustmentController`、`AdminExportController`；前端 `components/admin/` 与 `services/` 对应模块。 |
 
 ### 尚未实现、暂缓或未验证的事项
 
@@ -116,7 +117,7 @@ Linux Docker Compose、新库初始化、首个总管理员和 IP HTTPS 部署�
 
 ## 后续实现与部署工作
 
-逻辑数据模型、状态机、权限矩阵、用户故事、功能模块、物理数据库设计和已定案 API 契约均已按现行决定更新；`TODO-01` 至 `TODO-48`、`TODO-50` 至 `TODO-63`、`TODO-68` 至 `TODO-70` 已确认并同步，TODO-64/66/67 是由 TODO-68 取代的历史决定，TODO-39 与 TODO-07 的冲突按方案 B 解决，TODO-49 特殊边界继续暂缓，TODO-65 记录师生凭证重置的授权/API 契约缺口并待确认。主要师生互选链路已接入前后端代码；学校教师门户动态检索请求尚待联调，导师公开资料缓存、批次参与授权和导师公开资料头像迁移已应用于本机验证库，后两类停用/历史数据表继续保留且当前代码不读写。其他环境实施前仍须核对目标版本、备份和回滚方案。核心业务自动化验收和运行验证仍待补齐。轮次重开和常规关系恢复/改派复用既有表字段，不新增数据库结构。
+逻辑数据模型、状态机、权限矩阵、用户故事、功能模块、物理数据库设计和已定案 API 契约均已按现行决定更新；`TODO-01` 至 `TODO-48`、`TODO-50` 至 `TODO-63`、`TODO-68` 至 `TODO-74` 已确认并同步，TODO-61 的资料审核规则已由 TODO-74 取代，TODO-64/66/67 是由 TODO-68 取代的历史决定，TODO-39 与 TODO-07 的冲突按方案 B 解决，TODO-49 特殊边界继续暂缓，TODO-65 记录师生凭证重置的授权/API 契约缺口并待确认。主要师生互选链路已接入前后端代码；导师资料保存后即时公开，审核页面和 API 已移除；存量待审资料的数据迁移已准备但尚未应用，不改变数据库结构。学校教师门户动态检索请求尚待联调，导师公开资料缓存、批次参与授权和导师公开资料头像迁移已应用于本机验证库，历史授权表继续保留且当前代码不读写。其他环境实施前仍须核对目标版本、备份和回滚方案。核心业务自动化验收和运行验证仍待补齐。轮次重开和常规关系恢复/改派复用既有表字段，不新增数据库结构。
 
 1. **补齐功能缺口与验收：** 先由业务方确认 TODO-65 中师生凭证重置的执行角色与数据范围，再补齐 API/实现；自助找回渠道目前没有设计。为志愿、逐轮决定、补选、关系/名额原子更新补充正常、权限、状态、重复请求、截止边界及并发测试；完成浏览器端到端验收。TODO-49 仍须等待业务方决策后才能扩展。
 2. **完成文件存储配置：** 在部署环境配置 OSS 凭证和最小 RAM 权限，核验简历私有存储、受控读取和访问审计。恶意文件扫描按 TODO-09 不在本期接入。
@@ -132,3 +133,5 @@ Linux Docker Compose、新库初始化、首个总管理员和 IP HTTPS 部署�
 2026-10-12 补充（TODO-71）：批次统计已接入每轮关闭后的当前未匹配学生弹窗（25 人/页）及完整 XLSX 导出。限定 `BATCH_MANAGER` 学院/批次范围，包含等待后续轮次者，录取后不再列入；导出留审计，无新增数据库对象。
 
 2026-10-25 补充（TODO-73）：导师工作台在填报截止后展示最终锁定版本中所有选择本人的学生及顺位；只在对应轮次开放且申请待处理时提供办理操作。提前可见学生仅显示必要身份字段，申请快照仍在进入轮次后生成。API 与 UI 已更新，无数据库结构变更。
+
+2026-10-26 补充（TODO-74）：导师修改头像及公开资料后立即更新学生目录，不经过管理员审核；导师招生范围设置仍由导师本人维护并在填报开始时冻结。移除了管理员资料审核页面和 API，准备了存量待审资料的数据迁移和回滚脚本；数据库结构不变，脚本尚未执行。

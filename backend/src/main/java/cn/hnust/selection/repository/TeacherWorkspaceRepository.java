@@ -112,7 +112,8 @@ public class TeacherWorkspaceRepository {
         Long avatarFileId) {
         jdbc.update("UPDATE teacher_public_profile_version SET research_directions = ?, biography = ?, " +
             "education_experience = ?, work_experience = ?, courses = ?, research_and_achievements = ?, avatar_file_id = ?, " +
-            "review_status = 'PENDING_REVIEW', submitted_at = UTC_TIMESTAMP(3), review_comment = NULL, " +
+            "review_status = 'APPROVED', submitted_at = UTC_TIMESTAMP(3), reviewed_by = NULL, reviewed_at = NULL, " +
+            "review_comment = NULL, published_at = UTC_TIMESTAMP(3), " +
             "row_version = row_version + 1 WHERE teacher_id = ? AND version_no = ? AND review_status = 'DRAFT'",
             directions, biography, educationExperience, workExperience, courses, researchAndAchievements, avatarFileId, teacherId, versionNo);
     }
@@ -129,7 +130,8 @@ public class TeacherWorkspaceRepository {
         String researchAndAchievements, Long avatarFileId) {
         return jdbc.update("UPDATE teacher_public_profile_version SET research_directions = ?, biography = ?, " +
             "education_experience = ?, work_experience = ?, courses = ?, research_and_achievements = ?, avatar_file_id = ?, " +
-            "submitted_at = UTC_TIMESTAMP(3), row_version = row_version + 1 " +
+            "review_status = 'APPROVED', submitted_at = UTC_TIMESTAMP(3), reviewed_by = NULL, reviewed_at = NULL, " +
+            "review_comment = NULL, published_at = UTC_TIMESTAMP(3), row_version = row_version + 1 " +
             "WHERE teacher_id = ? AND version_no = ? AND review_status = 'PENDING_REVIEW' AND row_version = ?",
             directions, biography, educationExperience, workExperience, courses, researchAndAchievements,
             avatarFileId, teacherId, versionNo, Long.valueOf(expectedRowVersion));
@@ -145,9 +147,15 @@ public class TeacherWorkspaceRepository {
         String educationExperience, String workExperience, String courses, String researchAndAchievements,
         Long avatarFileId) {
         jdbc.update("INSERT INTO teacher_public_profile_version (teacher_id, version_no, research_directions, biography, " +
-            "education_experience, work_experience, courses, research_and_achievements, avatar_file_id, review_status, submitted_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', UTC_TIMESTAMP(3))",
+            "education_experience, work_experience, courses, research_and_achievements, avatar_file_id, review_status, submitted_at, published_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))",
             teacherId, versionNo, directions, biography, educationExperience, workExperience, courses, researchAndAchievements, avatarFileId);
+    }
+
+    public int updateCurrentPublicProfile(Long teacherId, int versionNo) {
+        return jdbc.update("UPDATE teacher SET current_public_profile_version_id = (" +
+            "SELECT profile.id FROM teacher_public_profile_version profile WHERE profile.teacher_id = teacher.id " +
+            "AND profile.version_no = ?), row_version = row_version + 1 WHERE teacher.id = ?", versionNo, teacherId);
     }
 
     public List<TeacherApplicationVO> listTeacherSelectedStudents(Long teacherId, Long batchId, int pageNo, int pageSize) {

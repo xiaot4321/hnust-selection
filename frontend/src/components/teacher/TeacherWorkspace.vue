@@ -76,11 +76,9 @@ const allNoticeCandidates = computed(() => [
   ...supplements.value.map((item) => ({ key: `SUPPLEMENT:${item.applicationId}`, type: 'SUPPLEMENT' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
 ])
 const reviewLabel = computed(() => ({
-  DRAFT: '待完善', PENDING_REVIEW: '待管理员审核', APPROVED: '已审核', PUBLISHED: '已公开', REJECTED: '需修改',
+  DRAFT: '尚未公开', PENDING_REVIEW: '保存后直接公开', APPROVED: '已公开', PUBLISHED: '已公开', REJECTED: '未公开内容',
 }[profile.value?.reviewStatus ?? 'DRAFT'] ?? (profile.value?.reviewStatus || '尚未提交')))
-const profileAvatarUrl = computed(() => profile.value?.reviewStatus === 'PENDING_REVIEW'
-  ? profile.value.submittedAvatarUrl ?? ''
-  : profile.value?.publishedAvatarUrl ?? profile.value?.submittedAvatarUrl ?? '')
+const profileAvatarUrl = computed(() => profile.value?.publishedAvatarUrl ?? profile.value?.submittedAvatarUrl ?? '')
 const avatarDisplayUrl = computed(() => avatarPreviewUrl.value || (clearAvatar.value ? '' : profileAvatarUrl.value))
 
 function messageFor(error: unknown): string {
@@ -272,7 +270,6 @@ async function decideSelectedSupplements(decision: 'ADMIT' | 'NOT_ADMITTED'): Pr
 }
 async function saveProfile(): Promise<void> {
   if (!profile.value || savingProfile.value) return
-  const wasPending = profile.value.reviewStatus === 'PENDING_REVIEW'
   const previousEtag = profile.value.etag
   savingProfile.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
@@ -293,11 +290,9 @@ async function saveProfile(): Promise<void> {
     workExperience.value = profile.value.submittedWorkExperience ?? ''
     courses.value = profile.value.submittedCourses ?? ''
     researchAndAchievements.value = profile.value.submittedResearchAndAchievements ?? ''
-    successMessage.value = wasPending && profile.value.etag === previousEtag
-      ? '资料内容没有变化，仍在管理员审核中。'
-      : wasPending
-        ? '待审核资料已更新；管理员审核时将看到最新内容，当前公开版本继续展示。'
-      : '资料已提交管理员审核；审核通过后会显示在学生导师目录。'
+    successMessage.value = profile.value.etag === previousEtag
+      ? '公开资料内容没有变化。'
+      : '公开资料已保存并立即在学生导师目录生效。'
   } catch (error) {
     errorMessage.value = messageFor(error)
     await loadProfile()
@@ -430,19 +425,17 @@ onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(sc
     </section>
 
     <section v-else-if="section === 'profile'" class="teacher-panel" aria-labelledby="teacher-profile-heading">
-      <div class="teacher-panel-heading"><div><h3 id="teacher-profile-heading">维护公开资料</h3><p>学生目录展示经管理员审核通过的版本；编辑内容提交后进入审核流程。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
+      <div class="teacher-panel-heading"><div><h3 id="teacher-profile-heading">维护公开资料</h3><p>公开资料由导师本人维护，保存后立即在学生导师目录生效。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
       <div v-if="profile" class="teacher-profile-form"><div class="teacher-profile-identity"><span class="teacher-profile-avatar"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></span><div><strong>{{ profile.fullName }}</strong><span>{{ profile.employeeNo }}</span></div></div>
-        <div class="teacher-avatar-editor"><div class="teacher-avatar-preview"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像预览'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></div><div><strong>公开头像</strong><p>上传 JPG 或 PNG，最大 5 MB。提交后与公开资料一起审核，通过后显示在学生导师目录。</p><label class="teacher-avatar-picker">{{ selectedAvatar ? '更换图片' : '选择图片' }}<input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" @change="selectAvatar" /></label><button v-if="avatarDisplayUrl || profile.submittedAvatarUrl || profile.publishedAvatarUrl" class="teacher-avatar-remove" type="button" @click="removeAvatar">移除头像</button></div></div>
+        <div class="teacher-avatar-editor"><div class="teacher-avatar-preview"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像预览'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></div><div><strong>公开头像</strong><p>上传 JPG 或 PNG，最大 5 MB。保存后与公开资料一起立即生效。</p><label class="teacher-avatar-picker">{{ selectedAvatar ? '更换图片' : '选择图片' }}<input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" @change="selectAvatar" /></label><button v-if="avatarDisplayUrl || profile.submittedAvatarUrl || profile.publishedAvatarUrl" class="teacher-avatar-remove" type="button" @click="removeAvatar">移除头像</button></div></div>
         <label>研究方向<textarea v-model="directions" rows="3" maxlength="2000" placeholder="介绍主要研究领域与方向"></textarea></label>
         <label>个人简介<textarea v-model="biography" rows="6" maxlength="10000" placeholder="介绍指导风格、研究团队与相关信息"></textarea></label>
         <label>学习经历<textarea v-model="educationExperience" rows="4" maxlength="10000" placeholder="按时间填写毕业院校、专业、学位等经历"></textarea></label>
         <label>工作经历<textarea v-model="workExperience" rows="4" maxlength="10000" placeholder="按时间填写任职单位、岗位或职务"></textarea></label>
         <label>承担课程<textarea v-model="courses" rows="3" maxlength="10000" placeholder="填写承担的本科生或研究生课程"></textarea></label>
         <label>科研与成果<textarea v-model="researchAndAchievements" rows="8" maxlength="10000" placeholder="可分行填写科研项目、论文成果、奖励荣誉、学术服务或专著"></textarea></label>
-        <p v-if="profile.reviewStatus === 'PENDING_REVIEW'" class="teacher-published-note">资料正在审核。你可以继续修改并保存；审核通过前，学生仍看到当前已公开版本。</p>
-        <p v-else-if="profile.publishedResearchDirections || profile.publishedBiography || profile.publishedEducationExperience || profile.publishedWorkExperience || profile.publishedCourses || profile.publishedResearchAndAchievements" class="teacher-published-note">当前已公开版本仍保持展示，直到新版本审核通过。</p>
-        <p v-if="profile.reviewComment" class="teacher-review-comment">最近审核意见：{{ profile.reviewComment }}</p>
-        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在保存…' : profile.reviewStatus === 'PENDING_REVIEW' ? '保存待审核修改' : '提交管理员审核' }}</button>
+        <p class="teacher-published-note">头像和文字资料均由导师本人负责；每次保存后立即更新学生目录展示。</p>
+        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在保存…' : '保存公开资料' }}</button>
         <slot name="account-security" />
       </div>
     </section>

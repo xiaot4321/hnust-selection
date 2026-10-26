@@ -1,9 +1,9 @@
 # 师生互选系统 API 设计
 
-> 版本：2.10（导师消息发送人回溯）
-> 状态：在 2.9 基础上，导师消息在发送账号字段缺失时从对应业务操作记录还原发送人；通知响应结构不变，数据库无结构变更。TODO-49 特殊边界继续拒绝，师生凭证重置范围仍按 TODO-65 待确认。
-> 更新日期：2026-10-25
-> 基线：[总体需求](../requirements.md) 0.41、[业务规则](business-rules.md) 0.28、[状态机](state-machine.md) 0.14、[权限矩阵](permission-matrix.md) 2.5、[用户故事](user-stories.md) 3.1、[功能模块设计](functional-modules.md) 0.27、[物理数据库设计](database-design.md) 1.4。
+> 版本：2.11（导师公开资料免审核）
+> 状态：导师公开资料 PATCH 保存后立即发布，移除管理员审核端点和页面；头像仍使用私有 OSS、受控临时签名地址。无数据库结构变更，存量待审核版本提供数据迁移脚本。TODO-49 特殊边界继续拒绝，师生凭证重置范围仍按 TODO-65 待确认。
+> 更新日期：2026-10-26
+> 基线：[总体需求](../requirements.md) 0.42、[业务规则](business-rules.md) 0.29、[状态机](state-machine.md) 0.14、[权限矩阵](permission-matrix.md) 2.6、[用户故事](user-stories.md) 3.2、[功能模块设计](functional-modules.md) 0.28、[物理数据库设计](database-design.md) 1.5。
 
 ## 1. 设计范围与原则
 
@@ -100,7 +100,7 @@
 | `POST /api/auth/password-change` | 已认证/首次改密 | 请求：当前或临时凭证、新密码；响应：完成状态 | 各角色临时凭证不设到期时间，但只能成功消费一次；首次登录强制改密。管理员凭证随机生成、仅展示一次并线下交付。 |
 | `GET /api/operations/{operationId}` | 发起者本人或有范围权限的管理员 | 响应：操作状态、逐项结果摘要和可否重试 | 仅查询授权范围内的业务操作；不可借此读取敏感请求原文。 |
 | `GET /api/majors` | 已认证 | 查询：学院/启用状态；响应：授权可见专业目录 | 仅提供目录数据，不授予读取学生身份信息的权限。 |
-| `GET /api/teachers`、`GET /api/teachers/{teacherId}` | 已认证学生 | 可选 batchId；不传时查询当前至少一个学年有有效年度资格、账号正常且公开资料已审核的导师；传入时按该批次及当前学生计算可见范围 | 返回已审核公开资料和 15 分钟 OSS 临时签名头像；无自传头像时使用学校主页照片。批次第一轮处理开始后，列表及详情只允许当前 `canApply=true` 的导师。不返回剩余名额数或个人联系方式。 |
+| `GET /api/teachers`、`GET /api/teachers/{teacherId}` | 已认证学生 | 可选 batchId；不传时查询当前至少一个学年有有效年度资格、账号正常且已有公开资料的导师；传入时按该批次及当前学生计算可见范围 | 返回导师本人已保存的公开资料和 15 分钟 OSS 临时签名头像；无自传头像时使用学校主页照片。批次第一轮处理开始后，列表及详情只允许当前 `canApply=true` 的导师。不返回剩余名额数或个人联系方式。 |
 | `GET /api/files/{fileId}/content` | 文件所有者、当前获授权导师或管理员 | 受控文件流 | 每次请求检查当前对象/字段权限并写访问审计；禁止公开永久链接。未命中授权记录返回 `NOT_FOUND`；授权通过但私有存储读取失败时返回 `INTERNAL_ERROR`，由服务端记录存储异常。 |
 | `GET /api/me/notices`、`POST /api/me/notices/{noticeId}/read` | 已认证收件人 | 分页通知项包含 `noticeId`、`title`、`content`、`senderName`、`senderRole`、`sentAt`、`readAt`；已读端点返回通知 ID 和已读时间 | 由服务端校验收件人账号。导师/学生发送人显示姓名；管理员显示登录标识；导师消息缺少发送账号时从对应业务操作人补取；无发送人的系统通知显示“互选系统”。列表仅返回当前账号已投递且已到可见时间的通知。 |
 
@@ -133,7 +133,7 @@
 
 | 方法与路径 | 权限 | 主要请求/响应 | 关键限制 |
 |---|---|---|---|
-| `GET /api/teachers/me/profile`、`PATCH /api/teachers/me/profile` | TEACHER 本人 | 资料当前版本/六项可编辑公开栏目和提交结果 | 研究方向、个人简介、学习经历、工作经历、承担课程、科研与成果均须管理员审核后才进入目录。 |
+| `GET /api/teachers/me/profile`、`PATCH /api/teachers/me/profile` | TEACHER 本人 | 当前公开版本、六项可编辑公开栏目和保存结果 | 头像与文字资料同版保存；每次有实际变化的保存立即切换当前公开版本并在学生目录生效，无需管理员审核。使用 `If-Match` 防止并发覆盖；OSS 头像保持私有并只返回服务端临时签名地址。 |
 | `GET /api/teachers/me/batches/{batchId}/application-scope` | TEACHER 本人 | 当前范围版本、类型、专业、冻结状态 | 不包含无关导师配置。 |
 | `PUT /api/teachers/me/batches/{batchId}/application-scope` | TEACHER 本人 | 完整范围；响应范围版本 | 填报开始前可改；空/缺省范围按已确认规则默认全选；冻结后拒绝。 |
 | `GET /api/teachers/me/application-scopes/batches` | TEACHER 本人 | 本导师名额所关联批次的范围配置选项 | 仅返回本人导师身份关联批次、学院、状态和填报开始时间；历史批次只读，不得用于查询其他导师名额。 |
@@ -160,8 +160,6 @@
 | `GET /api/admin/personnel-imports/{importId}/rows` | ADMIN + `COLLEGE_ADMIN` | 历史逐行结果/错误定位 | 按任务学院范围检查；查询响应永不返回已展示凭证。 |
 | `PATCH /api/admin/students/{studentId}/classification` | ADMIN 授权范围 | 专业、学位类型、变更依据及预期版本 | 追加分类修订；填报开始后的影响由身份纠错用例联动处理。 |
 | `GET /api/admin/identity-correction-requests?collegeId={id}&status=PENDING&pageNo=1&pageSize=20`、`POST /api/admin/identity-correction-requests/{requestId}/decision` | ADMIN + `COLLEGE_ADMIN`（总管理员隐含） | 学生身份更正队列/批准或驳回、处理意见 | 只可访问授权学院；批准追加分类修订并按 TODO-48 同步受影响批次；TODO-49 边界不扩展。决策需 `Idempotency-Key`。 |
-| `GET /api/admin/teacher-profile-versions?collegeId={id}&status=PENDING_REVIEW&pageNo=1&pageSize=20`、`GET /api/admin/teacher-profile-versions/{versionId}` | ADMIN + `COLLEGE_ADMIN`（总管理员隐含） | 授权学院待审队列和单版本详情 | 返回导师概要、提交字段、提交头像及已有公开版本头像的 15 分钟临时签名地址、版本号和提交时间；不返回联系方式等无关字段。 |
-| `POST /api/admin/teacher-profile-versions/{versionId}/review` | ADMIN + `COLLEGE_ADMIN`（总管理员隐含） | `decision=APPROVE\|REJECT`、驳回意见及版本 ETag | 通过后切换导师当前公开版本；驳回保留既有公开版本；需 `If-Match` 和 `Idempotency-Key`。不审核导师可报范围。 |
 | `GET /api/admin/selection-batches/colleges`、`GET /api/admin/selection-batches/academic-years?collegeId={id}` | ADMIN + `BATCH_MANAGER` 或 `BATCH_AUDIT`（总管理员隐含） | 授权学院与学年目录；学院项含 `canCreateBatch` | 指定批次授权仅列对应学院且 `canCreateBatch=false`；不扩大到其他批次。 |
 | `GET /api/admin/selection-batches?collegeId={id}` | ADMIN + `BATCH_MANAGER` 或 `BATCH_AUDIT` | 授权范围内批次概要 | 学院级授权列出该学院批次；指定批次授权只返回获授批次。 |
 | `POST /api/admin/selection-batches`、`PATCH /api/admin/selection-batches/{batchId}` | ADMIN + `BATCH_MANAGER`（总管理员隐含） | 草稿创建、草稿字段修改 | 创建要求学院级授权；指定批次授权不可创建新批次。 |
@@ -187,7 +185,7 @@
 
 - 身份纠错队列仅接受 `status=PENDING|APPROVED|REJECTED`，不传状态时默认 `PENDING`；按授权学院和提交时间升序分页。列表仅返回申请所需身份字段、学生说明、当前/申请分类和提交时间。
 - 身份纠错决策请求：`{ "decision": "APPROVE|REJECT", "handlingComment": "..." }`。驳回必须提供非空意见；批准时意见可选。已处理申请不可重复改变结果；批准须使用申请提交时的身份分类版本，版本已变化则返回 `STATE_CONFLICT`，要求管理员按最新资料重新核对后由学生发起新申请。
-- 导师审核列表以 `PENDING_REVIEW` 为默认筛选。详情响应包含导师 ID、工号、姓名、所属学院、资料版本、六项公开栏目、提交时间、当前公开版本的六项栏目摘要及 ETag。审核请求：`{ "decision": "APPROVE|REJECT", "comment": "..." }`。驳回意见必填，通过意见可空；请求使用 `If-Match` 与 `Idempotency-Key`。通过后原子更新审核记录和 `teacher.current_public_profile_version_id`。
+- 导师公开资料由导师本人通过 `PATCH /api/teachers/me/profile` 保存。请求包含六项公开文字字段及可选头像操作，并携带本人当前 `If-Match`；实际变更时在同一事务更新/新增资料版本、切换 `teacher.current_public_profile_version_id` 并记录审计，内容未变则返回当前版本。头像上传继续服务端校验、转换并写入私有 OSS。管理员不查询、审核或驳回导师资料；旧管理员资料审核 API 已移除。
 
 ### 4.6 轮次命令与补选候选规则
 
@@ -402,7 +400,7 @@ GET /api/admin/admin-accounts?pageNo=1&pageSize=20
 
 `loginIdentifier` 必须与 `studentNo` 相同；登录名由学号确定，不能为同一学生另设不同登录标识。`degreeType` 仅接受 `ACADEMIC_MASTER`（学硕）或 `PROFESSIONAL_MASTER`（专硕）。服务端创建 `STUDENT` 账号、初始资料版本和 `classification_version=1` 的分类修订记录；专业必须是同学院启用目录项。响应 `credential.temporaryCredential` 返回学号末尾六位作为初始密码，学号不足六位时返回完整学号；凭证不设到期时间、仅能成功使用一次、仅首次响应展示且首次登录强制改密，重复同幂等键不会再次给出明文。
 
-导师创建请求包含 `loginIdentifier`、`employeeNo`、`fullName`、`collegeId`，且 `loginIdentifier` 必须等于 `employeeNo`。服务端创建 `TEACHER` 账号、基本导师档案及空白 `DRAFT` 资料版本；响应 `credential.temporaryCredential` 返回工号末尾六位作为初始密码，工号不足六位时返回完整工号；凭证不设到期时间、仅能成功使用一次、仅首次响应展示和首次登录强制改密。导师须自行完善资料，审核通过前不对学生公开。学生与导师列表仅包含其登录标识、学号/工号、姓名、学院和必要档案概要。
+导师创建请求包含 `loginIdentifier`、`employeeNo`、`fullName`、`collegeId`，且 `loginIdentifier` 必须等于 `employeeNo`。服务端创建 `TEACHER` 账号、基本导师档案及空白 `DRAFT` 资料版本；响应 `credential.temporaryCredential` 返回工号末尾六位作为初始密码，工号不足六位时返回完整工号；凭证不设到期时间、仅能成功使用一次、仅首次响应展示和首次登录强制改密。导师首次保存公开资料后立即公开；尚未保存的空白草稿不进入学生目录。学生与导师列表仅包含其登录标识、学号/工号、姓名、学院和必要档案概要。
 
 专业新增请求字段：`collegeId`、`majorCode`、`name`、可选 `validFrom`/`validTo`（`YYYY-MM-DD`）和必填 `changeBasis`。修改请求字段：`name`、`active`、可选有效期、`changeBasis`。专业代码创建后不可修改；停用替代物理删除，保留现有人员与历史批次引用。
 
@@ -517,15 +515,15 @@ PUT /api/students/me/resume 使用 multipart/form-data，文件字段名为 file
 
 #### 导师目录与详情
 
-GET /api/teachers 的 batchId 为可选参数。未传 batchId 时，返回全校当前至少一个学年年度资格为 `ELIGIBLE` 且仍有效、账号启用、公开资料审核通过的导师；该目录不要求存在或选择互选批次。此模式按姓名/工号、研究方向和分页筛选，不提供批次可报范围，`canApply=false`。传入 batchId 时按批次内规则查询。列表每项包含 teacherId、employeeNo、displayName、collegeName、researchDirections、profileSummary、allowedDegreeTypes、allowedMajors、canApply 和 officialProfile。allowedMajors 每项为 majorId、majorCode、majorName。GET /api/teachers/{teacherId} 的 batchId 同样可选；不传时仅允许读取符合全校年度资格导师目录条件的公开资料，传入时使用对应批次可见范围。详情返回上述字段及 biography、educationExperience、workExperience、courses、researchAndAchievements；后五项是经审核的系统资料，字段为空时前端可展示官方资料缓存中对应栏目。
+GET /api/teachers 的 batchId 为可选参数。未传 batchId 时，返回全校当前至少一个学年年度资格为 `ELIGIBLE` 且仍有效、账号启用、已有公开资料的导师；该目录不要求存在或选择互选批次。此模式按姓名/工号、研究方向和分页筛选，不提供批次可报范围，`canApply=false`。传入 batchId 时按批次内规则查询。列表每项包含 teacherId、employeeNo、displayName、collegeName、researchDirections、profileSummary、allowedDegreeTypes、allowedMajors、canApply 和 officialProfile。allowedMajors 每项为 majorId、majorCode、majorName。GET /api/teachers/{teacherId} 的 batchId 同样可选；不传时仅允许读取符合全校年度资格导师目录条件的公开资料，传入时使用对应批次可见范围。详情返回上述字段及 biography、educationExperience、workExperience、courses、researchAndAchievements；后五项是导师保存并公开的系统资料，字段为空时前端可展示官方资料缓存中对应栏目。
 
-officialProfile 为 `null` 或学校官网缓存的公开资料对象，含 photoUrl、professionalTitle、educationLevel、department、teachingLevel、researchDirections、biography、educationExperience、workExperience、courses、researchAndAchievements、profileUrl、sourceName 和 cachedAt。系统已审核导师资料优先；官网字段仅补充对应本地字段为空的内容。搜索时以姓名查找候选，再核对官网个人主页中的姓名和学院；无法唯一确认时不采纳官网资料。来源限定为 `faculty.hnust.edu.cn`。只保存和返回公开学术资料，不保存或返回电话、邮箱、性别等个人联系信息。
+officialProfile 为 `null` 或学校官网缓存的公开资料对象，含 photoUrl、professionalTitle、educationLevel、department、teachingLevel、researchDirections、biography、educationExperience、workExperience、courses、researchAndAchievements、profileUrl、sourceName 和 cachedAt。导师本人保存的系统资料优先；官网字段仅补充对应本地字段为空的内容。搜索时以姓名查找候选，再核对官网个人主页中的姓名和学院；无法唯一确认时不采纳官网资料。来源限定为 `faculty.hnust.edu.cn`。只保存和返回公开学术资料，不保存或返回电话、邮箱、性别等个人联系信息。
 
-目录列表只读取现有缓存，不为一页导师逐个同步请求官网；打开导师详情时，缓存不存在或超过 30 天才尝试刷新。校方目录暂不可用、返回格式变化、缓存表尚未迁移或没有唯一匹配时，接口继续返回系统内审核通过的资料，officialProfile 可以为空或使用同姓名/学院的旧缓存。官网资料不改变导师是否可填报的实时计算或服务端志愿校验。学生填报页请求 `canApply=true` 的列表并可直接加入一至三位导师，再在同页调整顺位并提交。
+目录列表只读取现有缓存，不为一页导师逐个同步请求官网；打开导师详情时，缓存不存在或超过 30 天才尝试刷新。校方目录暂不可用、返回格式变化、缓存表尚未迁移或没有唯一匹配时，接口继续返回导师本人保存的系统资料，officialProfile 可以为空或使用同姓名/学院的旧缓存。官网资料不改变导师是否可填报的实时计算或服务端志愿校验。学生填报页请求 `canApply=true` 的列表并可直接加入一至三位导师，再在同页调整顺位并提交。
 
 学校门户使用的动态检索入口为 `https://faculty.hnust.edu.cn//TPHP/data/search`，检索表单姓名字段为 `query`。该站未发布面向本系统的 API 契约，服务端当前按页面观察到的入口发送表单请求；HTTP 方法、完整请求字段及响应格式须在门户联调时复核。当前集成仅允许学校教师主页域名下的详情链接，且必须在详情页再次核对姓名和学院；任何请求/解析/匹配失败均按上述缓存降级处理，不影响志愿提交。
 
-不传 batchId 时，导师目录和详情始终独立于批次可查，只返回账号启用、公开资料审核通过且至少一个学年当前年度资格有效的导师；此范围跨学院，`canApply` 固定为 false，表示该目录不用于具体批次填报。传入 batchId 时，第一轮处理开始前，目录与详情可展示该批次已配置名额、账号启用且资料已审核公开的全部导师；招生范围尚未冻结时返回当前配置预览，未配置或不完整的范围按两类学位和当前学院已启用专业全选预览。填报窗口开放时，列表可展示全部导师及各自的 `canApply` 状态；第一轮处理开始后，服务端忽略请求端对可见范围的放宽，只返回当前 `canApply=true` 的导师及详情。`canApply` 按当前学生身份、批次窗口、导师年度资格、账号、剩余名额和当前业务状态即时计算；不得返回导师剩余名额数量。提交常规志愿或补选时，服务端重新校验全部条件。目录与详情仅返回学生端获准查看的导师公开字段。
+不传 batchId 时，导师目录和详情始终独立于批次可查，只返回账号启用、已有公开资料且至少一个学年当前年度资格有效的导师；此范围跨学院，`canApply` 固定为 false，表示该目录不用于具体批次填报。传入 batchId 时，第一轮处理开始前，目录与详情可展示该批次已配置名额、账号启用且已有公开资料的全部导师；招生范围尚未冻结时返回当前配置预览，未配置或不完整的范围按两类学位和当前学院已启用专业全选预览。填报窗口开放时，列表可展示全部导师及各自的 `canApply` 状态；第一轮处理开始后，服务端忽略请求端对可见范围的放宽，只返回当前 `canApply=true` 的导师及详情。`canApply` 按当前学生身份、批次窗口、导师年度资格、账号、剩余名额和当前业务状态即时计算；不得返回导师剩余名额数量。提交常规志愿或补选时，服务端重新校验全部条件。目录与详情仅返回学生端获准查看的导师公开字段。
 
 #### 当前志愿与志愿历史
 
@@ -551,7 +549,7 @@ GET /api/me/notices 返回通用分页 items，每项包含 noticeId、title、c
 
 ### 5.13 导师工作台响应字段
 
-`GET /api/teachers/me/profile` 返回本人标识、已公开资料、最新提交资料、审核状态/意见、资料版本号和强 ETag；另返回 `publishedAvatarUrl` 和 `submittedAvatarUrl`，均为 15 分钟有效的私有 OSS 临时签名地址。公开与提交文本字段分别包含 `researchDirections`、`biography`、`educationExperience`、`workExperience`、`courses`、`researchAndAchievements`。PATCH 保留 `application/json` 文本更新方式，并支持 `multipart/form-data`：`profile` 部分为上述六项完整替换值的 JSON，研究方向最多 2,000 字，其余每项最多 10,000 字，空字符串用于清空栏目，字段不得为 null；可附带可选图片部分 `avatar`，或设置 `clearAvatar=true` 移除草稿/待审版本头像，两者不得同时提供。图片仅接受 JPEG/PNG，原文件 ≤5 MB、最长边 ≤4096 像素且总像素 ≤1600 万；服务端解码并规范为最长边不超过 1600 像素的 JPEG。JSON 更新若未提供头像字段，或 multipart 未选择文件且未请求移除，保留最新版本的头像。请求必须把响应体中的 `etag` 原样放入 `If-Match`，不另要求幂等键。头像文件与资料版本在同一事务关联；事务失败时删除新上传对象。待审核期间修改会更新同一个待审版本，更新提交时间和 row_version 并记录审计；字段未变时不写入。管理员审核页的旧 ETag 随即失效，需刷新后审核最新内容。待审核稿不替换学生目录中的已公开版本。
+`GET /api/teachers/me/profile` 返回本人标识、当前公开资料、最新资料版本和强 ETag；另返回 `publishedAvatarUrl` 和 `submittedAvatarUrl`，均为 15 分钟有效的私有 OSS 临时签名地址。为兼容现有响应，暂保留 `reviewStatus`、`reviewComment`、`submitted*` 字段：新保存的资料不再进入 `PENDING_REVIEW`，`APPROVED` 表示当前版本已公开，审核意见不再由新流程生成；新保存后 `published*` 与 `submitted*` 指向同一版本，空白 `DRAFT` 仍未公开。公开与最新版本文本字段包含 `researchDirections`、`biography`、`educationExperience`、`workExperience`、`courses`、`researchAndAchievements`。PATCH 保留 `application/json` 文本更新方式，并支持 `multipart/form-data`：`profile` 部分为上述六项完整替换值的 JSON，研究方向最多 2,000 字，其余每项最多 10,000 字，空字符串用于清空栏目，字段不得为 null；可附带可选图片部分 `avatar`，或设置 `clearAvatar=true` 移除当前编辑版本头像，两者不得同时提供。图片仅接受 JPEG/PNG，原文件 ≤5 MB、最长边 ≤4096 像素且总像素 ≤1600 万；服务端解码并规范为最长边不超过 1600 像素的 JPEG。JSON 更新若未提供头像字段，或 multipart 未选择文件且未请求移除，保留最新版本的头像。请求必须把响应体中的 `etag` 原样放入 `If-Match`，不另要求幂等键。头像文件与资料版本在同一事务关联；事务失败时删除新上传对象。实际内容有变化时，在同一事务更新或新增版本、切换当前公开指针并记录审计，保存后立即进入学生目录；字段未变时不写入。历史待审核版本通过独立数据迁移发布。
 
 常规申请分页每项字段为 `applicationId`、`batchId`、`batchName`、`roundNo`、`preferenceOrder`、`studentNo`、`fullName`、`majorName`、`degreeType`、`biography`、`resumeFileId`、`status`、`enteredReviewAt`、`processedAt`。补选分页每项字段为 `applicationId`、`batchId`、`batchName`、`studentNo`、`fullName`、`majorName`、`degreeType`、`biography`、`resumeFileId`、`status`、`submittedAt`、`processedAt`。两类资料只来自申请时快照，不含学生联系方式或成绩；简历通过本节 4.1 的受控文件接口读取。
 
@@ -672,7 +670,7 @@ GET /api/me/notices 返回通用分页 items，每项包含 noticeId、title、c
 | 不同批量操作间的排序 | 不同操作不引入全局候选人排序/FIFO 排队；数据库行锁保证名额不超额，竞争最后名额时先取得行锁并成功提交的操作获得。 | 已确认（TODO-51） |
 | 错误码和消息 | 错误码用稳定字符串大写下划线格式，HTTP 状态表达大类，客户端按 code 分支；`message` 使用简明中文展示，字段错误单独返回。内部异常只进日志，不泄露 SQL/堆栈。 | 已确认 |
 
-`TODO-50` 至 `TODO-63`、`TODO-68` 至 `TODO-70` 已按业务方确认结果写入登记表及规则文档；此前 `TODO-64/66/67` 决策被 TODO-68 取代。本版本明确年度资格关键词查询及复选批量维护由前端多次调用现有单人命令完成；服务端每人独立校验、历史和审计。批次发布不要求学生/导师参与名单；补选候选按年度资格、资料、名额和冻结范围自动计算。导师可在待审核期间继续修改同一公开资料版本，管理员须基于最新 ETag 审核；头像作为同版字段存入 OSS 私有对象，管理员批准后才进入学生目录。学生、导师与管理员初始/重置临时凭证均不设到期时间，仍为一次性消费并要求首次登录改密；学生/导师初始密码仍取学号/工号末尾六位，较短编号完整使用。管理员轮次重开请求包含管理员指定的 `newEndAt` 与原因。端点路径与请求/响应字段是实施契约；页面按契约细化按钮可用条件、字段和错误展示。仍需补充 OpenAPI 文档与接口级验收记录，并验证目标部署环境要求。本 API 定稿不构成生产部署批准。
+`TODO-50` 至 `TODO-63`、`TODO-68` 至 `TODO-70` 和 `TODO-74` 已按业务方确认结果写入登记表及规则文档；此前 `TODO-64/66/67` 决策被 TODO-68 取代，资料审核旧规则又由 TODO-74 取消。本版本明确年度资格关键词查询及复选批量维护由前端多次调用现有单人命令完成；服务端每人独立校验、历史和审计。批次发布不要求学生/导师参与名单；补选候选按年度资格、资料、名额和冻结范围自动计算。导师头像与文字资料保存后立即公开，无需管理员审核；历史待审核资料另行迁移。学生、导师与管理员初始/重置临时凭证均不设到期时间，仍为一次性消费并要求首次登录改密；学生/导师初始密码仍取学号/工号末尾六位，较短编号完整使用。管理员轮次重开请求包含管理员指定的 `newEndAt` 与原因。端点路径与请求/响应字段是实施契约；页面按契约细化按钮可用条件、字段和错误展示。仍需补充 OpenAPI 文档与接口级验收记录，并验证目标部署环境要求。本 API 定稿不构成生产部署批准。
 
 ### 每轮关闭后的当前未匹配学生（TODO-71，2026-10-12）
 

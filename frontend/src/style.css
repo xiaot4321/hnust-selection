@@ -138,6 +138,27 @@ a:focus-visible {
   background: var(--hnust-line);
 }
 
+.sidebar-account {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px 12px;
+}
+
+.sidebar-account .sidebar-user {
+  flex: 1 1 auto;
+}
+
+.sidebar-account .sidebar-logout {
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 8px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
 .side-navigation {
   display: flex;
   flex-direction: column;
@@ -154,6 +175,10 @@ a:focus-visible {
 
 .navigation-subheading {
   margin-top: 26px;
+}
+
+.side-navigation > .navigation-subheading:first-child {
+  margin-top: 0;
 }
 
 .side-link {
@@ -1322,6 +1347,28 @@ a:focus-visible {
 
 .account-security-card .change-password-form {
   max-width: 560px;
+}
+
+.admin-account-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.admin-access-empty {
+  padding: 18px 0;
+}
+
+.admin-access-empty h2 {
+  margin: 0 0 7px;
+  color: var(--hnust-blue-deep);
+  font-size: 20px;
+}
+
+.admin-access-empty p {
+  margin: 0;
+  color: var(--hnust-muted);
+  font-size: 13px;
 }
 
 @media (max-width: 560px) {

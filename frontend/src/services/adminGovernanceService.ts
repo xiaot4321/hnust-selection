@@ -8,17 +8,6 @@ export interface IdentityCorrection {
   currentMajorName: string; currentDegreeType: string; requestedMajorName: string | null; requestedDegreeType: string | null
   studentExplanation: string; status: string; handlingComment: string | null
 }
-export interface TeacherProfileReview {
-  versionId: number; teacherId: number; employeeNo: string; fullName: string; collegeId: number; collegeName: string
-  versionNo: number; reviewStatus: string; researchDirections: string; biography: string
-  educationExperience: string | null; workExperience: string | null; courses: string | null; researchAndAchievements: string | null
-  submittedAt: string
-  currentPublishedVersionNo: number | null; currentPublishedResearchDirections: string | null
-  currentPublishedBiography: string | null; currentPublishedEducationExperience: string | null
-  currentPublishedWorkExperience: string | null; currentPublishedCourses: string | null
-  currentPublishedResearchAndAchievements: string | null; avatarUrl: string | null
-  currentPublishedAvatarUrl: string | null; etag: string
-}
 export interface MatchingRelation {
   relationId: number; batchId: number; studentId: number; studentNo: string; studentName: string; majorName: string
   relationStatus: string; matchReason: string | null; teacherId: number; teacherEmployeeNo: string; teacherName: string; batchStatus: string; etag: string
@@ -41,18 +30,6 @@ export const adminGovernanceService = {
   decideIdentity(requestId: number, decision: 'APPROVE' | 'REJECT', handlingComment: string): Promise<unknown> {
     return request(`/admin/identity-correction-requests/${requestId}/decision`, {
       method: 'POST', headers: { 'Idempotency-Key': key() }, body: JSON.stringify({ decision, handlingComment }),
-    })
-  },
-  teacherProfiles(collegeId: number, pageNo = 1): Promise<PageResult<TeacherProfileReview>> {
-    return request(`/admin/teacher-profile-versions?collegeId=${collegeId}&status=PENDING_REVIEW&pageNo=${pageNo}&pageSize=20`)
-  },
-  async teacherProfile(versionId: number): Promise<TeacherProfileReview> {
-    return request(`/admin/teacher-profile-versions/${versionId}`)
-  },
-  reviewTeacherProfile(item: TeacherProfileReview, decision: 'APPROVE' | 'REJECT', comment: string): Promise<TeacherProfileReview> {
-    return request(`/admin/teacher-profile-versions/${item.versionId}/review`, {
-      method: 'POST', headers: { 'If-Match': `"${item.etag}"`, 'Idempotency-Key': key() },
-      body: JSON.stringify({ decision, comment }),
     })
   },
   relations(batchId: number, pageNo = 1): Promise<PageResult<MatchingRelation>> {
