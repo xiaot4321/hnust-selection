@@ -71,15 +71,14 @@ const roundOpeningText = computed(() => {
   return `${prefix}开放时间：${format(round.opensAt)}`
 })
 const allNoticeCandidates = computed(() => [
-  ...applications.value.map((item) => ({ key: `ROUND:${item.applicationId}`, type: 'ROUND' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
+  ...applications.value.filter((item) => item.applicationId !== null)
+    .map((item) => ({ key: `ROUND:${item.applicationId}`, type: 'ROUND' as const, id: item.applicationId as number, name: item.fullName, no: item.studentNo })),
   ...supplements.value.map((item) => ({ key: `SUPPLEMENT:${item.applicationId}`, type: 'SUPPLEMENT' as const, id: item.applicationId, name: item.fullName, no: item.studentNo })),
 ])
 const reviewLabel = computed(() => ({
-  DRAFT: '待完善', PENDING_REVIEW: '待管理员审核', APPROVED: '已审核', PUBLISHED: '已公开', REJECTED: '需修改',
+  DRAFT: '尚未公开', PENDING_REVIEW: '保存后直接公开', APPROVED: '已公开', PUBLISHED: '已公开', REJECTED: '未公开内容',
 }[profile.value?.reviewStatus ?? 'DRAFT'] ?? (profile.value?.reviewStatus || '尚未提交')))
-const profileAvatarUrl = computed(() => profile.value?.reviewStatus === 'PENDING_REVIEW'
-  ? profile.value.submittedAvatarUrl ?? ''
-  : profile.value?.publishedAvatarUrl ?? profile.value?.submittedAvatarUrl ?? '')
+const profileAvatarUrl = computed(() => profile.value?.publishedAvatarUrl ?? profile.value?.submittedAvatarUrl ?? '')
 const avatarDisplayUrl = computed(() => avatarPreviewUrl.value || (clearAvatar.value ? '' : profileAvatarUrl.value))
 
 function messageFor(error: unknown): string {
@@ -91,7 +90,12 @@ function formatTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value))
 }
 function degreeLabel(value: string): string { return value === 'ACADEMIC_MASTER' ? '学硕' : value === 'PROFESSIONAL_MASTER' ? '专硕' : value }
-function statusLabel(value: string): string { return value === 'IN_REVIEW' ? '待处理' : value === 'ADMITTED' ? '已录取' : value === 'NOT_ADMITTED' || value === 'REJECTED' ? '未录取' : value }
+function statusLabel(value: string): string {
+  return ({
+    IN_REVIEW: '待处理', ADMITTED: '已录取', NOT_ADMITTED: '未录取', REJECTED: '未录取',
+    WAITING_FOR_ROUND: '等待对应轮次', NOT_ENTERED: '尚未进入本轮处理',
+  } as Record<string, string>)[value] ?? value
+}
 
 function discardAvatarPreview(): void {
   if (avatarPreviewUrl.value) URL.revokeObjectURL(avatarPreviewUrl.value)
@@ -147,14 +151,19 @@ async function loadSummary(): Promise<void> {
     if (selectedBatchId.value === batchId) { summary.value = null; errorMessage.value = messageFor(error) }
   }
 }
-async function loadRound(): Promise<void> {
+async function loadRound(preserveSelection = false): Promise<void> {
   if (!selectedBatchId.value) { applications.value = []; selectedRoundIds.value = []; return }
-  loading.value = true; errorMessage.value = ''; successMessage.value = ''
+  loading.value = true
+  if (!preserveSelection) { errorMessage.value = ''; successMessage.value = '' }
   try {
     const page = await teacherWorkspaceService.rounds(selectedBatchId.value, roundNo.value)
     applications.value = page.items
-    selectedRoundIds.value = []
-    if (page.total > page.items.length) successMessage.value = `当前显示 ${page.items.length} 条申请，共 ${page.total} 条。`
+    selectedRoundIds.value = preserveSelection
+      ? page.items.filter((item) => item.applicationId !== null && selectedRoundIds.value.includes(item.applicationId) &&
+        item.canDecide && item.preferenceOrder === roundNo.value && item.status === 'IN_REVIEW')
+        .map((item) => item.applicationId as number)
+      : []
+    if (!preserveSelection && page.total > page.items.length) successMessage.value = `当前显示 ${page.items.length} 名选过本人的学生，共 ${page.total} 名。`
   } catch (error) { applications.value = []; errorMessage.value = messageFor(error) }
   finally { loading.value = false }
 }
@@ -167,15 +176,16 @@ async function loadSupplements(): Promise<void> {
 }
 
 async function decideRound(item: TeacherApplication, decision: 'ADMIT' | 'NOT_ADMITTED'): Promise<void> {
-  if (!selectedBatchId.value || busyApplications.value.has(`ROUND:${item.applicationId}`)) return
-  const key = `ROUND:${item.applicationId}`
+  if (!selectedBatchId.value || item.applicationId === null || !item.canDecide || item.preferenceOrder !== roundNo.value || busyApplications.value.has(`ROUND:${item.applicationId}`)) return
+  const applicationId = item.applicationId
+  const key = `ROUND:${applicationId}`
   busyApplications.value = new Set(busyApplications.value).add(key)
   errorMessage.value = ''; successMessage.value = ''
   try {
-    const result = await teacherWorkspaceService.decideRound(selectedBatchId.value, item, decision)
+    const result = await teacherWorkspaceService.decideRound(selectedBatchId.value, { ...item, applicationId }, decision)
     item.status = result.status
     item.processedAt = result.processedAt
-    selectedRoundIds.value = selectedRoundIds.value.filter((id) => id !== item.applicationId)
+    selectedRoundIds.value = selectedRoundIds.value.filter((id) => id !== applicationId)
     successMessage.value = decision === 'ADMIT' ? `${item.fullName} 已录取，师生关系已锁定。` : `已记录对 ${item.fullName} 的不录取决定。`
     await loadSummary()
   } catch (error) { errorMessage.value = messageFor(error); await loadSummary() }
@@ -201,12 +211,13 @@ function toggleSelected(ids: number[], target: number, update: (next: number[]) 
 }
 async function decideSelectedRound(decision: 'ADMIT' | 'NOT_ADMITTED'): Promise<void> {
   if (!selectedBatchId.value || bulkBusy.value) return
-  const selected = applications.value.filter((item) => selectedRoundIds.value.includes(item.applicationId) && item.status === 'IN_REVIEW')
+  const selected = applications.value.filter((item) => item.applicationId !== null && selectedRoundIds.value.includes(item.applicationId) &&
+    item.canDecide && item.preferenceOrder === roundNo.value && item.status === 'IN_REVIEW')
   if (!selected.length) return
   bulkBusy.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
     const accepted = await teacherWorkspaceService.decideRoundBatch(selectedBatchId.value, roundNo.value,
-      selected.map((item) => ({ applicationId: item.applicationId, decision })))
+      selected.map((item) => ({ applicationId: item.applicationId as number, decision })))
     const operation = await teacherWorkspaceService.waitForOperation(accepted.operationId)
     let admitted = 0; let failed = 0
     for (const itemResult of operation.items) {
@@ -259,7 +270,6 @@ async function decideSelectedSupplements(decision: 'ADMIT' | 'NOT_ADMITTED'): Pr
 }
 async function saveProfile(): Promise<void> {
   if (!profile.value || savingProfile.value) return
-  const wasPending = profile.value.reviewStatus === 'PENDING_REVIEW'
   const previousEtag = profile.value.etag
   savingProfile.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
@@ -280,11 +290,9 @@ async function saveProfile(): Promise<void> {
     workExperience.value = profile.value.submittedWorkExperience ?? ''
     courses.value = profile.value.submittedCourses ?? ''
     researchAndAchievements.value = profile.value.submittedResearchAndAchievements ?? ''
-    successMessage.value = wasPending && profile.value.etag === previousEtag
-      ? '资料内容没有变化，仍在管理员审核中。'
-      : wasPending
-        ? '待审核资料已更新；管理员审核时将看到最新内容，当前公开版本继续展示。'
-      : '资料已提交管理员审核；审核通过后会显示在学生导师目录。'
+    successMessage.value = profile.value.etag === previousEtag
+      ? '公开资料内容没有变化。'
+      : '公开资料已保存并立即在学生导师目录生效。'
   } catch (error) {
     errorMessage.value = messageFor(error)
     await loadProfile()
@@ -326,7 +334,7 @@ watch(roundNo, () => { if (section.value === 'applications') void Promise.all([l
 onMounted(async () => {
   scheduleTimer = window.setInterval(() => {
     clockNow.value = Date.now()
-    if (!document.hidden && section.value === 'applications') void loadSummary()
+    if (!document.hidden && section.value === 'applications') void Promise.all([loadSummary(), loadRound(true)])
   }, 15000)
   await Promise.all([loadBatches(), loadProfile()])
 })
@@ -355,24 +363,25 @@ onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(sc
       <p v-if="currentBatch" class="teacher-round-opening" role="status">{{ roundOpeningText }}</p>
       <div class="teacher-panel-heading">
         <div><h3 id="round-applications-heading">常规轮次申请</h3>
-          <p>每轮只处理对应顺位投向本人的申请；导师决定不排序，录取成功后立即锁定关系。</p></div>
+          <p>填报截止后可查看所有选过本人的学生及其志愿顺位；只有进入对应开放轮次的申请可以处理，录取成功后立即锁定关系。</p></div>
         <div class="round-selector" aria-label="选择轮次">
           <button v-for="number in [1, 2, 3]" :key="number" type="button" :class="{ active: roundNo === number }" @click="roundNo = number">第 {{ number }} 轮</button>
         </div>
       </div>
       <p v-if="!currentBatch" class="teacher-empty">当前没有关联导师名额的批次。</p>
       <div v-else-if="applications.length" class="teacher-application-list">
-        <article v-for="item in applications" :key="item.applicationId" class="teacher-application-card" :class="{ selectable: item.status === 'IN_REVIEW' }">
-          <label v-if="item.status === 'IN_REVIEW'" class="teacher-select-application" :aria-label="`选择 ${item.fullName}`"><input type="checkbox" :checked="selectedRoundIds.includes(item.applicationId)" :disabled="bulkBusy" @change="toggleSelected(selectedRoundIds, item.applicationId, (next) => selectedRoundIds = next)" /></label>
+        <article v-for="item in applications" :key="`${item.studentNo}:${item.preferenceOrder}`" class="teacher-application-card" :class="{ selectable: item.canDecide && item.preferenceOrder === roundNo }">
+          <label v-if="item.canDecide && item.preferenceOrder === roundNo && item.applicationId !== null" class="teacher-select-application" :aria-label="`选择 ${item.fullName}`"><input type="checkbox" :checked="selectedRoundIds.includes(item.applicationId)" :disabled="bulkBusy" @change="toggleSelected(selectedRoundIds, item.applicationId, (next) => selectedRoundIds = next)" /></label>
           <div class="teacher-student-avatar">{{ item.fullName.slice(0, 1) }}</div>
           <div class="teacher-application-body">
             <div class="teacher-application-title"><div><h4>{{ item.fullName }}</h4><span>{{ item.studentNo }} · {{ item.majorName }} · {{ degreeLabel(item.degreeType) }}</span></div>
               <span class="teacher-status" :class="item.status.toLowerCase()">{{ statusLabel(item.status) }}</span></div>
-            <p class="teacher-biography">{{ item.biography || '学生暂未填写个人简介。' }}</p>
-            <div class="teacher-application-meta"><span>第 {{ item.preferenceOrder }} 志愿</span><span>进入本轮 {{ formatTime(item.enteredReviewAt) }}</span>
+            <p v-if="item.applicationId !== null" class="teacher-biography">{{ item.biography || '学生暂未填写个人简介。' }}</p>
+            <p v-else class="teacher-biography teacher-application-locked-note">该志愿尚未进入对应处理轮次，申请资料将在进入轮次后提供。</p>
+            <div class="teacher-application-meta"><span>第 {{ item.preferenceOrder }} 志愿</span><span v-if="item.enteredReviewAt">进入本轮 {{ formatTime(item.enteredReviewAt) }}</span><span v-else>尚未进入处理</span>
               <a v-if="item.resumeFileId" :href="`/api/files/${item.resumeFileId}/content`" target="_blank" rel="noreferrer">查看简历</a>
             </div>
-            <div v-if="item.status === 'IN_REVIEW'" class="teacher-decision-actions">
+            <div v-if="item.canDecide && item.preferenceOrder === roundNo && item.applicationId !== null && item.status === 'IN_REVIEW'" class="teacher-decision-actions">
               <button class="teacher-admit-button" type="button" :disabled="busyApplications.has(`ROUND:${item.applicationId}`)" @click="decideRound(item, 'ADMIT')">录取并锁定</button>
               <button class="teacher-reject-button" type="button" :disabled="busyApplications.has(`ROUND:${item.applicationId}`)" @click="decideRound(item, 'NOT_ADMITTED')">不录取</button>
             </div>
@@ -380,7 +389,7 @@ onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(sc
         </article>
       </div>
       <div v-if="selectedRoundIds.length" class="teacher-bulk-actions"><span>已选择 {{ selectedRoundIds.length }} 项</span><button class="teacher-admit-button" type="button" :disabled="bulkBusy" @click="decideSelectedRound('ADMIT')">{{ bulkBusy ? '处理中…' : '批量录取所选' }}</button><button class="teacher-reject-button" type="button" :disabled="bulkBusy" @click="decideSelectedRound('NOT_ADMITTED')">批量不录取</button></div>
-      <div v-else-if="!applications.length" class="teacher-empty"><strong>{{ loading ? '正在读取申请…' : '当前轮暂时没有申请' }}</strong><span>填报阶段不会显示志愿；轮次开启后，只有投向本人的对应顺位申请会出现在这里。</span></div>
+      <div v-else-if="!applications.length" class="teacher-empty"><strong>{{ loading ? '正在读取学生名单…' : '暂无已锁定并选择本人的学生' }}</strong><span>填报阶段名单保密。填报截止后，所有选择了本人的学生都会显示在这里；办理操作只会在对应轮次开放时出现。</span></div>
       <div v-if="allNoticeCandidates.length" class="teacher-message-box">
         <div><h3>联系申请学生</h3><p>收件人由所选申请自动确定，不能填写其他学生或账号。</p></div>
         <fieldset class="teacher-message-recipients"><legend>收件学生</legend>
@@ -416,19 +425,17 @@ onBeforeUnmount(() => { if (scheduleTimer !== undefined) window.clearInterval(sc
     </section>
 
     <section v-else-if="section === 'profile'" class="teacher-panel" aria-labelledby="teacher-profile-heading">
-      <div class="teacher-panel-heading"><div><h3 id="teacher-profile-heading">维护公开资料</h3><p>学生目录展示经管理员审核通过的版本；编辑内容提交后进入审核流程。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
+      <div class="teacher-panel-heading"><div><h3 id="teacher-profile-heading">维护公开资料</h3><p>公开资料由导师本人维护，保存后立即在学生导师目录生效。</p></div><span class="teacher-review-badge">{{ reviewLabel }}</span></div>
       <div v-if="profile" class="teacher-profile-form"><div class="teacher-profile-identity"><span class="teacher-profile-avatar"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></span><div><strong>{{ profile.fullName }}</strong><span>{{ profile.employeeNo }}</span></div></div>
-        <div class="teacher-avatar-editor"><div class="teacher-avatar-preview"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像预览'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></div><div><strong>公开头像</strong><p>上传 JPG 或 PNG，最大 5 MB。提交后与公开资料一起审核，通过后显示在学生导师目录。</p><label class="teacher-avatar-picker">{{ selectedAvatar ? '更换图片' : '选择图片' }}<input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" @change="selectAvatar" /></label><button v-if="avatarDisplayUrl || profile.submittedAvatarUrl || profile.publishedAvatarUrl" class="teacher-avatar-remove" type="button" @click="removeAvatar">移除头像</button></div></div>
+        <div class="teacher-avatar-editor"><div class="teacher-avatar-preview"><img v-if="avatarDisplayUrl" :src="avatarDisplayUrl" :alt="profile.fullName + '头像预览'" /><span v-else>{{ profile.fullName.slice(0, 1) }}</span></div><div><strong>公开头像</strong><p>上传 JPG 或 PNG，最大 5 MB。保存后与公开资料一起立即生效。</p><label class="teacher-avatar-picker">{{ selectedAvatar ? '更换图片' : '选择图片' }}<input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" @change="selectAvatar" /></label><button v-if="avatarDisplayUrl || profile.submittedAvatarUrl || profile.publishedAvatarUrl" class="teacher-avatar-remove" type="button" @click="removeAvatar">移除头像</button></div></div>
         <label>研究方向<textarea v-model="directions" rows="3" maxlength="2000" placeholder="介绍主要研究领域与方向"></textarea></label>
         <label>个人简介<textarea v-model="biography" rows="6" maxlength="10000" placeholder="介绍指导风格、研究团队与相关信息"></textarea></label>
         <label>学习经历<textarea v-model="educationExperience" rows="4" maxlength="10000" placeholder="按时间填写毕业院校、专业、学位等经历"></textarea></label>
         <label>工作经历<textarea v-model="workExperience" rows="4" maxlength="10000" placeholder="按时间填写任职单位、岗位或职务"></textarea></label>
         <label>承担课程<textarea v-model="courses" rows="3" maxlength="10000" placeholder="填写承担的本科生或研究生课程"></textarea></label>
         <label>科研与成果<textarea v-model="researchAndAchievements" rows="8" maxlength="10000" placeholder="可分行填写科研项目、论文成果、奖励荣誉、学术服务或专著"></textarea></label>
-        <p v-if="profile.reviewStatus === 'PENDING_REVIEW'" class="teacher-published-note">资料正在审核。你可以继续修改并保存；审核通过前，学生仍看到当前已公开版本。</p>
-        <p v-else-if="profile.publishedResearchDirections || profile.publishedBiography || profile.publishedEducationExperience || profile.publishedWorkExperience || profile.publishedCourses || profile.publishedResearchAndAchievements" class="teacher-published-note">当前已公开版本仍保持展示，直到新版本审核通过。</p>
-        <p v-if="profile.reviewComment" class="teacher-review-comment">最近审核意见：{{ profile.reviewComment }}</p>
-        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在保存…' : profile.reviewStatus === 'PENDING_REVIEW' ? '保存待审核修改' : '提交管理员审核' }}</button>
+        <p class="teacher-published-note">头像和文字资料均由导师本人负责；每次保存后立即更新学生目录展示。</p>
+        <button class="teacher-admit-button" type="button" :disabled="savingProfile" @click="saveProfile">{{ savingProfile ? '正在保存…' : '保存公开资料' }}</button>
         <slot name="account-security" />
       </div>
     </section>

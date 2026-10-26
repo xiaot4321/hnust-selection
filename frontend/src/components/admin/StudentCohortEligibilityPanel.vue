@@ -9,7 +9,7 @@ import {
 } from '../../services/personnelManagementService'
 
 const props = defineProps<{ collegeId: number; collegeName: string; years: AcademicYearOption[] }>()
-const emit = defineEmits<{ busy: [value: boolean] }>()
+const emit = defineEmits<{ busy: [value: boolean]; academicYearCreated: [year: AcademicYearOption] }>()
 type QualificationMode = 'STUDENT' | 'TEACHER'
 type TeacherBatchOutcome = 'PROCESSING' | 'SUCCESS' | 'UNCHANGED' | 'FAILED'
 interface TeacherFilterSnapshot { collegeId: number; academicYearId: number; keyword: string }
@@ -28,6 +28,10 @@ type Candidate = PersonRecord & { status: 'READY' | 'EXISTING' | 'SUCCESS' | 'FA
 
 const mode = ref<QualificationMode>('STUDENT')
 const yearId = ref<number | null>(null)
+const yearFormOpen = ref(false)
+const yearSaving = ref(false)
+const yearError = ref('')
+const yearDraft = ref({ yearCode: '', displayName: '', changeBasis: '' })
 const enrollmentYear = ref('')
 const basis = ref('')
 const teacherKeyword = ref('')
@@ -86,6 +90,28 @@ function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : '暂时无法连接服务，请重试。'
 }
 function setBusy(value: boolean): void { emit('busy', value) }
+
+async function createAcademicYear(): Promise<void> {
+  if (yearSaving.value || !yearDraft.value.yearCode.trim() || !yearDraft.value.displayName.trim()
+    || !yearDraft.value.changeBasis.trim()) return
+  yearSaving.value = true
+  yearError.value = ''
+  try {
+    const year = await personnelManagementService.createAcademicYear({
+      collegeId: props.collegeId, yearCode: yearDraft.value.yearCode.trim(),
+      displayName: yearDraft.value.displayName.trim(), changeBasis: yearDraft.value.changeBasis.trim(),
+    })
+    emit('academicYearCreated', year)
+    yearId.value = year.id
+    result.value = '学年“' + year.displayName + '”已添加到全校学年目录。'
+    yearDraft.value = { yearCode: '', displayName: '', changeBasis: '' }
+    yearFormOpen.value = false
+  } catch (cause) {
+    yearError.value = message(cause)
+  } finally {
+    yearSaving.value = false
+  }
+}
 
 watch(() => props.years, years => {
   if (!years.some(year => year.id === yearId.value)) yearId.value = years[0]?.id ?? null
@@ -447,11 +473,23 @@ async function loadEligibilityHistory(): Promise<void> {
       <button type="button" role="tab" :aria-selected="mode === 'TEACHER'" :class="{ active: mode === 'TEACHER' }" :disabled="busy" @click="mode = 'TEACHER'">导师资格</button>
     </div>
 
+    <div class="academic-year-toolbar">
+      <label>参与学年<select v-model.number="yearId" :disabled="busy || yearSaving"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option><option v-if="!years.length" :value="null" disabled>暂无学年，请先新增</option></select></label>
+      <button type="button" class="academic-year-toggle" :disabled="yearSaving" @click="yearFormOpen = !yearFormOpen">{{ yearFormOpen ? '收起' : '新增参与学年' }}</button>
+    </div>
+    <form v-if="yearFormOpen" class="academic-year-create" @submit.prevent="createAcademicYear">
+      <p>新增的学年会加入全校共享目录；学年代码必须唯一。</p>
+      <label>学年代码<input v-model.trim="yearDraft.yearCode" maxlength="16" placeholder="例如 2027" required :disabled="yearSaving" /></label>
+      <label>学年名称<input v-model.trim="yearDraft.displayName" maxlength="64" placeholder="例如 2027 测试学年" required :disabled="yearSaving" /></label>
+      <label class="academic-year-reason">新增原因<textarea v-model.trim="yearDraft.changeBasis" maxlength="2000" placeholder="说明新增该学年的原因" required :disabled="yearSaving" /></label>
+      <p v-if="yearError" class="academic-year-error" role="alert">{{ yearError }}</p>
+      <div class="academic-year-actions"><button type="submit" :disabled="yearSaving">{{ yearSaving ? '正在创建…' : '创建学年' }}</button><button type="button" class="academic-year-cancel" :disabled="yearSaving" @click="yearFormOpen = false">取消</button></div>
+    </form>
+
     <template v-if="mode === 'STUDENT'">
       <h4 id="cohort-eligibility-title">按入学年份统一开放学生资格</h4>
       <p>选择参与学年和入学年份，预览学院学生名单后统一开放资格。</p>
       <div class="cohort-fields">
-        <label>参与学年<select v-model.number="yearId" :disabled="busy"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>
         <label>入学年份<input v-model="enrollmentYear" inputmode="numeric" maxlength="4" placeholder="例如 2026" :disabled="busy" /></label>
         <label class="cohort-basis">开放依据<textarea v-model="basis" maxlength="4000" placeholder="例如：学院确认的 2026 级已录取并报到学生名单" :disabled="busy" /></label>
       </div>
@@ -474,7 +512,6 @@ async function loadEligibilityHistory(): Promise<void> {
       <h4 id="cohort-eligibility-title">按年度授权导师资格</h4>
       <p>仅查询上方选定学院内的导师。按工号或姓名筛选后，可批量授予或取消资格；每位导师分别校验并记录历史和审计。</p>
       <div class="teacher-filters">
-        <label>参与学年<select v-model.number="yearId" :disabled="busy"><option v-for="year in years" :key="year.id" :value="year.id">{{ year.displayName }}</option></select></label>
         <label class="teacher-keyword">导师工号或姓名<input v-model="teacherKeyword" placeholder="输入工号或姓名，可留空查询全院导师" :disabled="busy" /></label>
         <button type="button" :disabled="busy || !yearId" @click="searchTeachers">{{ loading ? '查询中…' : '查询导师' }}</button>
       </div>
@@ -542,6 +579,19 @@ async function loadEligibilityHistory(): Promise<void> {
 .qualification-mode { display: flex; gap: 7px; margin: 0 0 18px; border-bottom: 1px solid #d7e4e9; }
 .qualification-mode button { padding: 8px 13px; border: 1px solid transparent; border-radius: 5px 5px 0 0; background: transparent; color: var(--hnust-muted); font: inherit; cursor: pointer; }
 .qualification-mode button.active { border-color: #cfe0e6; border-bottom-color: #f5fafc; background: #e8f0f3; color: var(--hnust-blue-deep); font-weight: 700; }
+.academic-year-toolbar { display: flex; align-items: end; gap: 12px; margin: 16px 0; }
+.academic-year-toolbar label { display: grid; flex: 1; max-width: 460px; gap: 8px; font-weight: 650; }
+.academic-year-toolbar select,.academic-year-create input,.academic-year-create textarea { min-width: 0; padding: 11px 12px; border: 1px solid #c9dce6; border-radius: 5px; background: white; font: inherit; }
+.academic-year-toggle,.academic-year-actions button { padding: 10px 15px; border: 1px solid var(--hnust-blue); border-radius: 5px; background: var(--hnust-blue); color: white; font: inherit; cursor: pointer; }
+.academic-year-create { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; margin: 0 0 18px; padding: 16px; border: 1px solid #cfe2ec; border-radius: 6px; background: #fff; }
+.academic-year-create>p:first-child,.academic-year-reason,.academic-year-error,.academic-year-actions { grid-column: 1 / -1; }
+.academic-year-create>p:first-child { margin: 0; color: var(--hnust-muted); font-size: 12px; }
+.academic-year-create label { display: grid; gap: 7px; font-weight: 650; }
+.academic-year-create textarea { min-height: 70px; resize: vertical; }
+.academic-year-error { margin: 0; color: #b43d3d!important; }
+.academic-year-actions { display: flex; gap: 8px; }
+.academic-year-actions .academic-year-cancel { border-color: #c9dce6; background: white; color: var(--hnust-blue-deep); }
+.academic-year-actions button:disabled,.academic-year-toggle:disabled { opacity: .5; cursor: default; }
 .cohort-fields,.teacher-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }.cohort-fields label,.teacher-filters label,.teacher-command label { display: grid; gap: 8px; font-weight: 650; }
 .cohort-basis,.teacher-evidence { grid-column: 1 / -1; }
 .cohort-fields input,.cohort-fields select,.cohort-fields textarea,.teacher-filters input,.teacher-filters select,.teacher-command input,.teacher-command select,.teacher-command textarea { min-width: 0; padding: 12px; border: 1px solid #c9dce6; border-radius: 5px; font: inherit; background: white; }
@@ -558,5 +608,5 @@ async function loadEligibilityHistory(): Promise<void> {
 .teacher-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }.teacher-actions button.secondary { color: var(--hnust-blue-deep); border: 1px solid #c9dce6; background: white; }.teacher-actions small { color: var(--hnust-muted); font-size: 11px; }
 .teacher-notice { margin: 10px 0; color: #8a6d3b!important; font-size: 12px; }.teacher-report { display: grid; gap: 10px; margin-top: 14px; }.teacher-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--hnust-muted); font-size: 12px; }.count { padding: 6px 9px; border-radius: 4px; }.count.success { background: #eaf3ed; color: #4f705e; }.count.unchanged { background: #eef2f4; color: #65747b; }.count.failed { background: #f4ebeb; color: #805959; }
 .history-toolbar { display: flex; gap: 9px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #dce7ee; }.history-toolbar button { padding: 7px 11px; border: 1px solid #c9dce6; border-radius: 5px; background: white; color: var(--hnust-blue-deep); font: inherit; cursor: pointer; }.history-toolbar button:disabled { opacity: .5; cursor: default; }.history-section { margin-top: 12px; }
-@media(max-width:760px) { .cohort-fields,.teacher-filters,.teacher-command { grid-template-columns: 1fr; }.cohort-basis,.teacher-evidence,.teacher-actions { grid-column: 1; } }
+@media(max-width:760px) { .cohort-fields,.teacher-filters,.teacher-command,.academic-year-create { grid-template-columns: 1fr; }.cohort-basis,.teacher-evidence,.teacher-actions,.academic-year-reason,.academic-year-actions { grid-column: 1; }.academic-year-toolbar { align-items: stretch; flex-direction: column; }.academic-year-toolbar label { max-width: none; } }
 </style>

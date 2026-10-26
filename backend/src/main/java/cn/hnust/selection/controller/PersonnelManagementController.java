@@ -1,6 +1,7 @@
 package cn.hnust.selection.controller;
 
 import cn.hnust.selection.common.Result;
+import cn.hnust.selection.request.CreateAcademicYearRequest;
 import cn.hnust.selection.request.CreateMajorRequest;
 import cn.hnust.selection.request.CreateStudentRequest;
 import cn.hnust.selection.request.CreateTeacherRequest;
@@ -69,6 +70,13 @@ public class PersonnelManagementController {
     public Result<List<AcademicYearOptionVO>> academicYears(
         @RequestParam("collegeId") @Positive Long collegeId, @AuthenticationPrincipal AccountPrincipal actor) {
         return Result.success(personnelService.listAcademicYears(actor, collegeId));
+    }
+
+    @PostMapping("/personnel/academic-years")
+    public Result<AcademicYearOptionVO> createAcademicYear(@Valid @RequestBody CreateAcademicYearRequest request,
+        @RequestHeader("Idempotency-Key") String idempotencyKey,
+        @AuthenticationPrincipal AccountPrincipal actor) {
+        return Result.success(personnelService.createAcademicYear(actor, request, idempotencyKey));
     }
 
     @GetMapping("/majors")

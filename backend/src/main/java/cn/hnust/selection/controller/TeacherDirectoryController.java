@@ -30,7 +30,7 @@ public class TeacherDirectoryController {
 
     @GetMapping
     public Result<PageResult<TeacherDirectoryItemVO>> list(
-        @RequestParam("batchId") @Positive Long batchId,
+        @RequestParam(value = "batchId", required = false) @Positive Long batchId,
         @RequestParam(value = "keyword", required = false) String keyword,
         @RequestParam(value = "researchDirection", required = false) String researchDirection,
         @RequestParam(value = "canApply", required = false) Boolean canApply,
@@ -46,7 +46,7 @@ public class TeacherDirectoryController {
     @GetMapping("/{teacherId}")
     public Result<TeacherDirectoryDetailVO> get(
         @PathVariable("teacherId") @Positive Long teacherId,
-        @RequestParam("batchId") @Positive Long batchId,
+        @RequestParam(value = "batchId", required = false) @Positive Long batchId,
         @AuthenticationPrincipal AccountPrincipal actor) {
         return Result.success(directoryService.get(actor, batchId, teacherId));
     }

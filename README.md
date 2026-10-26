@@ -11,6 +11,10 @@ docs/          需求与设计文档
 sql/mysql57/   MySQL 5.7.36 初始建库脚本及说明
 ```
 
+## Docker 服务器部署
+
+Linux 单机 Docker Compose、新建数据库、首个总管理员初始化与 IP HTTPS 访问见 [Docker 部署说明](docs/docker-deployment.md)。入口为根目录 `compose.yaml`；直接 HTTPS 访问时同时使用 `compose.tls.yaml`。部署配置通过服务器 `.env` 注入凭证，不自动建表、迁移或初始化账号。
+
 ## 本机运行
 
 学生/导师可在工作台验证绑定邮箱，并在登录页通过邮箱验证码找回密码。首次部署需应用邮箱增量迁移并配置 SMTP，详情见 [邮箱绑定与密码找回](docs/email-recovery.md)。管理员账号继续走管理重置流程。

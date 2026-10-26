@@ -8,6 +8,7 @@ import cn.hnust.selection.entity.PersonnelEntity;
 import cn.hnust.selection.entity.PersonnelOperationEntity;
 import cn.hnust.selection.exception.ApiException;
 import cn.hnust.selection.repository.PersonnelManagementRepository;
+import cn.hnust.selection.request.CreateAcademicYearRequest;
 import cn.hnust.selection.request.CreateMajorRequest;
 import cn.hnust.selection.request.CreateStudentRequest;
 import cn.hnust.selection.request.CreateTeacherRequest;
@@ -124,6 +125,36 @@ public class PersonnelManagementServiceImpl implements PersonnelManagementServic
             years.add(new AcademicYearOptionVO(year.getId(), year.getYearCode(), year.getDisplayName()));
         }
         return years;
+    }
+
+    /** 学年目录为全校共享；仅获授权学院的管理员可新增，唯一键与审计记录保护目录。 */
+    @Override
+    @Transactional
+    public AcademicYearOptionVO createAcademicYear(AccountPrincipal actor, CreateAcademicYearRequest request,
+                                                   String idempotencyKey) {
+        accessService.requireCollege(actor, request.getCollegeId());
+        String yearCode = trim(request.getYearCode());
+        String displayName = trim(request.getDisplayName());
+        String reason = trim(request.getChangeBasis());
+        String key = requireIdempotencyKey(idempotencyKey);
+        String action = "ACADEMIC_YEAR_CREATE";
+        String fingerprint = fingerprint(action, request.getCollegeId(), yearCode, displayName, reason);
+        Optional<PersonnelOperationEntity> replay = replay(actor.getAccountId(), action, key, fingerprint);
+        if (replay.isPresent()) return repository.findAcademicYearByCode(yearCode)
+            .map(year -> new AcademicYearOptionVO(year.getId(), year.getYearCode(), year.getDisplayName()))
+            .orElseThrow(() -> conflict("学年创建记录未能恢复"));
+        Long opId = repository.insertOperation(actor.getAccountId(), action, request.getCollegeId(), key, fingerprint);
+        try {
+            Long yearId = repository.insertAcademicYear(yearCode, displayName);
+            AcademicYearEntity created = repository.findAcademicYearByCode(yearCode)
+                .orElseThrow(() -> conflict("学年记录创建后无法读取"));
+            repository.insertAudit(opId, actor.getAccountId(), request.getCollegeId(), "ACADEMIC_YEAR", yearId,
+                action, json("yearCode", created.getYearCode(), "displayName", created.getDisplayName()), reason);
+            repository.completeOperation(opId);
+            return new AcademicYearOptionVO(created.getId(), created.getYearCode(), created.getDisplayName());
+        } catch (DuplicateKeyException exception) {
+            throw conflict("学年代码已存在，请更换学年编号");
+        }
     }
 
     @Override

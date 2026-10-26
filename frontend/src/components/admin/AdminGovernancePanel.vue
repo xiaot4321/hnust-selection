@@ -9,7 +9,6 @@ import {
   type ExportJob,
   type IdentityCorrection,
   type MatchingRelation,
-  type TeacherProfileReview,
 } from '../../services/adminGovernanceService'
 
 const props = defineProps<{ canReviewPersonnel: boolean; canManageBatches: boolean }>()
@@ -18,12 +17,11 @@ const batches = ref<AdminBatch[]>([])
 const selectedCollegeId = ref<number | null>(null)
 const selectedBatchId = ref<number | null>(null)
 const corrections = ref<IdentityCorrection[]>([])
-const profiles = ref<TeacherProfileReview[]>([])
 const relations = ref<MatchingRelation[]>([])
 const relationQuotas = ref<TeacherQuota[]>([])
 const replacementTeacherByRelation = ref<Record<number, number | null>>({})
 const exports = ref<ExportJob[]>([])
-const activeTab = ref<'identity' | 'profiles' | 'relations' | 'exports'>('identity')
+const activeTab = ref<'identity' | 'relations' | 'exports'>('identity')
 const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
@@ -64,14 +62,12 @@ async function loadCollegeData(): Promise<void> {
     const requests: Promise<unknown>[] = [adminGovernanceService.batches(selectedCollegeId.value)]
     if (props.canReviewPersonnel) {
       requests.push(adminGovernanceService.identityCorrections(selectedCollegeId.value))
-      requests.push(adminGovernanceService.teacherProfiles(selectedCollegeId.value))
     }
     const values = await Promise.all(requests)
     batches.value = values[0] as AdminBatch[]
     let index = 1
     if (props.canReviewPersonnel) {
       corrections.value = (values[index++] as { items: IdentityCorrection[] }).items
-      profiles.value = (values[index] as { items: TeacherProfileReview[] }).items
     }
     if (!batches.value.some((batch) => batch.id === selectedBatchId.value)) selectedBatchId.value = batches.value[0]?.id ?? null
     if (showRelations.value && selectedBatchId.value) await loadRelations()
@@ -112,23 +108,6 @@ async function reviewIdentity(item: IdentityCorrection, decision: 'APPROVE' | 'R
   try {
     await adminGovernanceService.decideIdentity(item.requestId, decision, handlingComment)
     successMessage.value = decision === 'APPROVE' ? '身份分类已更正，相关批次影响已记录。' : '申请已驳回。'
-    await loadCollegeData()
-  } catch (error) { errorMessage.value = errorText(error) }
-  finally { saving.value = false }
-}
-
-async function reviewProfile(item: TeacherProfileReview, decision: 'APPROVE' | 'REJECT'): Promise<void> {
-  let comment = ''
-  if (decision === 'REJECT') {
-    const value = window.prompt(`驳回 ${item.fullName} 的公开资料，请填写意见：`)
-    if (value === null) return
-    comment = value.trim()
-    if (!comment) { errorMessage.value = '驳回时必须填写审核意见。'; return }
-  } else if (!window.confirm(`确认发布 ${item.fullName} 的第 ${item.versionNo} 版公开资料吗？`)) return
-  saving.value = true; errorMessage.value = ''; successMessage.value = ''
-  try {
-    await adminGovernanceService.reviewTeacherProfile(item, decision, comment)
-    successMessage.value = decision === 'APPROVE' ? '导师资料已审核并发布。' : '资料已驳回，原公开版本继续生效。'
     await loadCollegeData()
   } catch (error) { errorMessage.value = errorText(error) }
   finally { saving.value = false }
@@ -217,7 +196,6 @@ onMounted(() => {
     </div>
     <nav class="governance-tabs" aria-label="管理员业务功能">
       <button v-if="canReviewPersonnel" :class="{ active: activeTab === 'identity' }" @click="activeTab = 'identity'">身份更正 <span>{{ corrections.length }}</span></button>
-      <button v-if="canReviewPersonnel" :class="{ active: activeTab === 'profiles' }" @click="activeTab = 'profiles'">导师资料审核 <span>{{ profiles.length }}</span></button>
       <button v-if="showRelations" :class="{ active: activeTab === 'relations' }" @click="activeTab = 'relations'">关系调整 <span>{{ relations.length }}</span></button>
       <button v-if="showExports" :class="{ active: activeTab === 'exports' }" @click="activeTab = 'exports'">数据导出 <span>{{ exports.length }}</span></button>
     </nav>
@@ -232,17 +210,6 @@ onMounted(() => {
         <div class="governance-comparison"><div><small>当前资料</small><strong>{{ item.currentMajorName }} · {{ degree(item.currentDegreeType) }}</strong></div><b aria-hidden="true">→</b><div><small>申请修改</small><strong>{{ item.requestedMajorName ?? '保持专业' }} · {{ degree(item.requestedDegreeType) }}</strong></div></div>
         <p class="governance-explanation">{{ item.studentExplanation }}</p>
         <div class="governance-actions"><button type="button" class="danger" :disabled="saving" @click="reviewIdentity(item, 'REJECT')">驳回并填写意见</button><button type="button" class="primary" :disabled="saving" @click="reviewIdentity(item, 'APPROVE')">批准更正</button></div>
-      </article>
-    </div>
-
-    <div v-else-if="activeTab === 'profiles' && canReviewPersonnel" class="governance-content">
-      <div class="governance-subhead"><div><h4>待审核导师公开资料</h4><p>通过后新版本进入公开目录；驳回时当前公开版本继续展示。</p></div><button type="button" :disabled="loading" @click="loadCollegeData">刷新</button></div>
-      <div v-if="!profiles.length" class="governance-empty">当前学院没有待审核资料。</div>
-      <article v-for="item in profiles" :key="item.versionId" class="governance-card">
-        <div class="governance-card-title"><div><strong>{{ item.fullName }}</strong><span>{{ item.employeeNo }} · {{ item.collegeName }} · 版本 {{ item.versionNo }}</span></div><small>{{ new Date(item.submittedAt).toLocaleString('zh-CN') }}</small></div>
-        <div class="governance-profile"><div v-if="item.avatarUrl" class="governance-avatar-review"><small>本次提交头像</small><img :src="item.avatarUrl" :alt="item.fullName + '提交头像'" /></div><small>研究方向</small><p>{{ item.researchDirections || '未填写' }}</p><small>个人简介</small><p>{{ item.biography || '未填写' }}</p><small>学习经历</small><p>{{ item.educationExperience || '未填写' }}</p><small>工作经历</small><p>{{ item.workExperience || '未填写' }}</p><small>承担课程</small><p>{{ item.courses || '未填写' }}</p><small>科研与成果</small><p>{{ item.researchAndAchievements || '未填写' }}</p></div>
-        <details v-if="item.currentPublishedVersionNo"><summary>当前公开版本 {{ item.currentPublishedVersionNo }}</summary><div v-if="item.currentPublishedAvatarUrl" class="governance-avatar-review"><small>当前公开头像</small><img :src="item.currentPublishedAvatarUrl" :alt="item.fullName + '当前公开头像'" /></div><p>研究方向：{{ item.currentPublishedResearchDirections || '未填写' }}</p><p>个人简介：{{ item.currentPublishedBiography || '未填写' }}</p><p>学习经历：{{ item.currentPublishedEducationExperience || '未填写' }}</p><p>工作经历：{{ item.currentPublishedWorkExperience || '未填写' }}</p><p>承担课程：{{ item.currentPublishedCourses || '未填写' }}</p><p>科研与成果：{{ item.currentPublishedResearchAndAchievements || '未填写' }}</p></details>
-        <div class="governance-actions"><button type="button" class="danger" :disabled="saving" @click="reviewProfile(item, 'REJECT')">驳回并填写意见</button><button type="button" class="primary" :disabled="saving" @click="reviewProfile(item, 'APPROVE')">审核通过并发布</button></div>
       </article>
     </div>
 

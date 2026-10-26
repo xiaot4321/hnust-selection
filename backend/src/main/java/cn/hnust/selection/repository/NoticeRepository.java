@@ -19,9 +19,20 @@ public class NoticeRepository {
     public List<StudentNoticeVO> findVisibleNotices(Long accountId, int pageNo, int pageSize) {
         long offset = ((long) pageNo - 1L) * pageSize;
         String sql = "SELECT notice.id AS notice_id, notice.title, notice.body, " +
+            "CASE WHEN sender_account.id IS NULL THEN 'SYSTEM' ELSE sender_account.role_code END AS sender_role, " +
+            "CASE WHEN sender_account.id IS NULL THEN '互选系统' " +
+            "WHEN sender_account.role_code = 'TEACHER' THEN COALESCE(NULLIF(sender_teacher.full_name, ''), sender_account.login_identifier) " +
+            "WHEN sender_account.role_code = 'STUDENT' THEN COALESCE(NULLIF(sender_student.full_name, ''), sender_account.login_identifier) " +
+            "ELSE sender_account.login_identifier END AS sender_name, " +
             "DATE_FORMAT(recipient.delivered_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS sent_at, " +
             "DATE_FORMAT(recipient.read_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS read_at " +
             "FROM notice_recipient recipient JOIN site_notice notice ON notice.id = recipient.notice_id " +
+            "LEFT JOIN business_operation sender_operation ON sender_operation.id = notice.source_operation_id " +
+            "LEFT JOIN account sender_account ON sender_account.id = CASE " +
+            "WHEN notice.notice_type = 'TEACHER_MESSAGE' AND notice.sender_account_id IS NULL " +
+            "THEN sender_operation.actor_account_id ELSE notice.sender_account_id END " +
+            "LEFT JOIN teacher sender_teacher ON sender_teacher.account_id = sender_account.id " +
+            "LEFT JOIN student sender_student ON sender_student.account_id = sender_account.id " +
             "WHERE recipient.account_id = ? AND recipient.delivered_at IS NOT NULL " +
             "AND (notice.visible_at IS NULL OR notice.visible_at <= UTC_TIMESTAMP(3)) " +
             "ORDER BY recipient.delivered_at DESC, notice.id DESC LIMIT ? OFFSET ?";
@@ -30,6 +41,8 @@ public class NoticeRepository {
             item.setNoticeId(rs.getLong("notice_id"));
             item.setTitle(rs.getString("title"));
             item.setContent(rs.getString("body"));
+            item.setSenderRole(rs.getString("sender_role"));
+            item.setSenderName(rs.getString("sender_name"));
             item.setSentAt(rs.getString("sent_at"));
             item.setReadAt(rs.getString("read_at"));
             return item;

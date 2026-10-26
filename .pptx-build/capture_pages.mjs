@@ -99,7 +99,7 @@ const batch = { id: 301, collegeId: 1, collegeName: '计算机科学与工程学
   batchCode: '2026-A', name: batchSummary.batchName, status: 'ACTIVE', supplementPlanned: true, appendReason: null,
   publishedAt: '2026-10-01T09:00:00Z', startedAt: date, rowVersion: 4 }
 const batchDetail = { batch, stages }
-const statistics = { batchId: 301, frozenDenominator: 128, matchedCount: 46, currentUnmatchedCount: 82,
+const statistics = { batchId: 301, frozenDenominator: 128, submittedPreferenceStudentCount: 78, matchedCount: 46, currentUnmatchedCount: 82,
   normalPreferenceUnmatchedCount: 0, notSubmittedCount: 0, allRemainingPreferencesSkippedCount: 0,
   identityCorrectionUnmatchedCount: 0, relationCorrectionUnmatchedCount: 0, batchCancelledUnmatchedCount: 0,
   supplementAdmittedCount: 0, supplementStillUnmatchedCount: 82, quotaLimit: 88, occupiedQuota: 46, remainingQuota: 42,

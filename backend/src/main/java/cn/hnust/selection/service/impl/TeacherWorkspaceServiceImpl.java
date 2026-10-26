@@ -139,9 +139,12 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
             avatarFileId = repository.insertTeacherProfileAvatar(actor.getAccountId(), stored.getFilename(),
                 stored.getMediaType(), stored.getSize(), stored.getDigest(), stored.getKey());
         }
+        boolean contentUnchanged = sameProfileContent(current, directions, biography, educationExperience, workExperience, courses,
+            researchAndAchievements, avatarFileId);
+        if (("APPROVED".equals(current.getReviewStatus()) || "PUBLISHED".equals(current.getReviewStatus())) && contentUnchanged) {
+            return current;
+        }
         if ("PENDING_REVIEW".equals(current.getReviewStatus())) {
-            if (sameProfileContent(current, directions, biography, educationExperience, workExperience, courses,
-                researchAndAchievements, avatarFileId)) return current;
             String beforeHash = profileContentHash(current.getSubmittedResearchDirections(), current.getSubmittedBiography(),
                 current.getSubmittedEducationExperience(), current.getSubmittedWorkExperience(), current.getSubmittedCourses(),
                 current.getSubmittedResearchAndAchievements(), avatarValue(current.getSubmittedAvatarFileId()));
@@ -157,12 +160,16 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
             if (changed != 1) {
                 throw new ApiException("PRECONDITION_FAILED", "资料已更新，请重新读取后再保存", HttpStatus.PRECONDITION_FAILED);
             }
-            long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_UPDATE_PENDING",
-                UUID.randomUUID().toString(), hash("PROFILE_PENDING_EDIT|" + teacherId + "|" + versionNo + "|" +
+            if (repository.updateCurrentPublicProfile(teacherId, versionNo) != 1) {
+                throw new ApiException("INTERNAL_ERROR", "公开资料已保存，但无法更新公开版本", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_PUBLISH",
+                UUID.randomUUID().toString(), hash("PROFILE_PUBLISH|" + teacherId + "|" + versionNo + "|" +
                     beforeHash + "|" + afterHash));
             repository.insertAudit(actor.getAccountId(), null, "TEACHER_PUBLIC_PROFILE_VERSION", Long.valueOf(versionNo),
-                "TEACHER_PROFILE_UPDATE_PENDING", profileAuditValues(versionNo, rowVersion, beforeHash, current.getSubmittedAvatarFileId()),
-                profileAuditValues(versionNo, rowVersion + 1L, afterHash, avatarFileId), Long.valueOf(operationId));
+                "TEACHER_PROFILE_PUBLISH", profileAuditValues(versionNo, rowVersion, beforeHash,
+                    current.getSubmittedAvatarFileId(), "PENDING_REVIEW"),
+                profileAuditValues(versionNo, rowVersion + 1L, afterHash, avatarFileId, "APPROVED"), Long.valueOf(operationId));
             repository.completeOperation(Long.valueOf(operationId));
             return repository.findProfile(teacherId).orElseThrow(() -> new ApiException("INTERNAL_ERROR", "资料更新后无法读取", HttpStatus.INTERNAL_SERVER_ERROR));
         }
@@ -184,14 +191,22 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
                     workExperience, courses, researchAndAchievements, avatarFileId);
             }
         }
-        long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_SUBMIT",
-            UUID.randomUUID().toString(), hash("PROFILE|" + teacherId + "|" + nextVersion + "|" + directions + "|" +
+        if (repository.updateCurrentPublicProfile(teacherId, "DRAFT".equals(current.getReviewStatus())
+            ? current.getVersionNo().intValue() : nextVersion) != 1) {
+            throw new ApiException("INTERNAL_ERROR", "公开资料已保存，但无法更新公开版本", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        long publishedVersion = "DRAFT".equals(current.getReviewStatus())
+            ? current.getVersionNo().longValue() : nextVersion;
+        long operationId = repository.insertOperation(actor.getAccountId(), null, "TEACHER_PROFILE_PUBLISH",
+            UUID.randomUUID().toString(), hash("PROFILE|" + teacherId + "|" + publishedVersion + "|" + directions + "|" +
                 biography + "|" + educationExperience + "|" + workExperience + "|" + courses + "|" + researchAndAchievements +
                 "|" + avatarValue(avatarFileId)));
-        repository.insertAudit(actor.getAccountId(), null, "TEACHER_PUBLIC_PROFILE_VERSION", Long.valueOf(nextVersion),
-            "TEACHER_PROFILE_SUBMIT", null, profileAuditValues(nextVersion, 0L,
+        long publishedRowVersion = "DRAFT".equals(current.getReviewStatus())
+            ? current.getProfileRowVersion().longValue() + 1L : 0L;
+        repository.insertAudit(actor.getAccountId(), null, "TEACHER_PUBLIC_PROFILE_VERSION", Long.valueOf(publishedVersion),
+            "TEACHER_PROFILE_PUBLISH", null, profileAuditValues((int) publishedVersion, publishedRowVersion,
                 profileContentHash(directions, biography, educationExperience, workExperience, courses,
-                    researchAndAchievements, avatarValue(avatarFileId)), avatarFileId), operationId);
+                    researchAndAchievements, avatarValue(avatarFileId)), avatarFileId, "APPROVED"), operationId);
         repository.completeOperation(operationId);
         return repository.findProfile(teacherId).orElseThrow(() -> new ApiException("INTERNAL_ERROR", "资料提交后无法读取", HttpStatus.INTERNAL_SERVER_ERROR));
     }
@@ -203,13 +218,12 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         validatePage(pageNo, pageSize);
         if (roundNo < 1 || roundNo > 3) throw invalid("轮次只能是 1、2 或 3");
         if (!repository.ownsBatch(teacherId, batchId)) throw notFound("未找到本人在该批次的业务范围");
-        StageContext stage = repository.findRoundStage(teacherId, batchId, roundNo).orElseThrow(() -> notFound("当前轮次不存在"));
-        Timestamp now = repository.databaseUtcNow();
-        if (!isOpen(stage.batchStatus, stage.currentStageId, stage.stageId, stage.stageStatus, stage.startAt, stage.endAt, now)) {
-            throw new ApiException("STATE_CONFLICT", "当前轮次未开放或已关闭", HttpStatus.CONFLICT);
+        repository.findRoundStage(teacherId, batchId, roundNo).orElseThrow(() -> notFound("当前轮次不存在"));
+        if (!repository.isFillingClosed(batchId)) {
+            return new PageResult<TeacherApplicationVO>(java.util.Collections.<TeacherApplicationVO>emptyList(), 0L, pageNo, pageSize);
         }
-        return new PageResult<TeacherApplicationVO>(repository.listRoundApplications(teacherId, batchId, roundNo, pageNo, pageSize),
-            repository.countRoundApplications(teacherId, batchId, roundNo), pageNo, pageSize);
+        return new PageResult<TeacherApplicationVO>(repository.listTeacherSelectedStudents(teacherId, batchId, pageNo, pageSize),
+            repository.countTeacherSelectedStudents(teacherId, batchId), pageNo, pageSize);
     }
 
     @Override
@@ -610,9 +624,10 @@ public class TeacherWorkspaceServiceImpl implements TeacherWorkspaceService {
         }
         return hash(content.toString());
     }
-    private static String profileAuditValues(int versionNo, long rowVersion, String contentHash, Long avatarFileId) {
+    private static String profileAuditValues(int versionNo, long rowVersion, String contentHash, Long avatarFileId,
+        String reviewStatus) {
         return "{\"versionNo\":" + versionNo + ",\"rowVersion\":" + rowVersion +
-            ",\"reviewStatus\":\"PENDING_REVIEW\",\"avatarFileId\":" +
+            ",\"reviewStatus\":\"" + reviewStatus + "\",\"avatarFileId\":" +
             (avatarFileId == null ? "null" : avatarFileId.toString()) + ",\"contentHash\":\"" + contentHash + "\"}";
     }
     private static String avatarValue(Long avatarFileId) { return avatarFileId == null ? "" : avatarFileId.toString(); }

@@ -504,6 +504,7 @@ public class SelectionBatchRepository {
     public BatchStatisticsVO findBatchStatistics(SelectionBatchEntity batch) {
         Long batchId = batch.getId();
         Map<String, Object> counts = jdbc.queryForMap("SELECT COUNT(*) AS roster_count, " +
+            "COALESCE(SUM(CASE WHEN preference_status IN ('SUBMITTED','LOCKED') THEN 1 ELSE 0 END), 0) AS submitted_preference_count, " +
             "COALESCE(SUM(CASE WHEN match_status = 'MATCHED' THEN 1 ELSE 0 END), 0) AS matched_count, " +
             "COALESCE(SUM(CASE WHEN match_status = 'UNMATCHED' THEN 1 ELSE 0 END), 0) AS unmatched_count, " +
             "COALESCE(SUM(CASE WHEN match_status = 'UNMATCHED' AND match_reason IN ('ROUND3_EXHAUSTED','PREFERENCE_EXHAUSTED') THEN 1 ELSE 0 END), 0) AS normal_unmatched_count, " +
@@ -541,7 +542,8 @@ public class SelectionBatchRepository {
                 skipped == null ? 0L : skipped.longValue(), number(round, "cancelled_count")));
         }
         Long frozenDenominator = batch.getFrozenRosterAt() == null ? null : number(counts, "roster_count");
-        return new BatchStatisticsVO(batchId, frozenDenominator, number(counts, "matched_count"),
+        return new BatchStatisticsVO(batchId, frozenDenominator, number(counts, "submitted_preference_count"),
+            number(counts, "matched_count"),
             number(counts, "unmatched_count"), number(counts, "normal_unmatched_count"),
             number(counts, "not_submitted_count"), number(counts, "skipped_count"),
             number(counts, "identity_correction_count"), number(counts, "relation_correction_count"),

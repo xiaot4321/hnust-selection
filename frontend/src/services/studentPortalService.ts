@@ -78,7 +78,7 @@ export function confirmStudentIdentity(
 }
 
 export interface TeacherDirectoryQuery {
-  batchId: number
+  batchId?: number
   keyword?: string
   researchDirection?: string
   canApply?: boolean
@@ -88,18 +88,19 @@ export interface TeacherDirectoryQuery {
 
 export function listTeachers(query: TeacherDirectoryQuery): Promise<PageResult<TeacherDirectoryItem>> {
   const params = new URLSearchParams({
-    batchId: String(query.batchId),
     pageNo: String(query.pageNo ?? 1),
     pageSize: String(query.pageSize ?? 20),
   })
+  if (query.batchId !== undefined) params.set('batchId', String(query.batchId))
   if (query.keyword) params.set('keyword', query.keyword)
   if (query.researchDirection) params.set('researchDirection', query.researchDirection)
   if (query.canApply !== undefined) params.set('canApply', String(query.canApply))
   return request<PageResult<TeacherDirectoryItem>>('/teachers?' + params.toString())
 }
 
-export function getTeacherDetail(teacherId: number, batchId: number): Promise<TeacherDetail> {
-  return request<TeacherDetail>('/teachers/' + teacherId + '?batchId=' + batchId)
+export function getTeacherDetail(teacherId: number, batchId?: number): Promise<TeacherDetail> {
+  const query = batchId === undefined ? '' : '?batchId=' + batchId
+  return request<TeacherDetail>('/teachers/' + teacherId + query)
 }
 
 export function listSupplementApplications(batchId: number): Promise<PageResult<SupplementApplication>> {

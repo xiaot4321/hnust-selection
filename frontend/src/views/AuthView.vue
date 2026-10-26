@@ -69,6 +69,18 @@ const canViewBatches = computed(() => isTotalAdmin.value || (user.value?.role ==
   && user.value.authorizations.some((authorization) => ['BATCH_MANAGER', 'BATCH_AUDIT'].includes(authorization.capabilityCode))))
 const canUseAdminGovernance = computed(() => canManagePersonnel.value || canManageBatches.value)
 const canManageTeacherScope = computed(() => user.value?.role === 'TEACHER')
+const hasAdminEntry = computed(() => canManagePersonnel.value || canManageAdminAuthorizations.value
+  || canViewBatches.value || canUseAdminGovernance.value)
+const landingRoute = computed<PortalRoute>(() => {
+  if (!user.value) return 'home'
+  if (user.value?.role === 'STUDENT') return 'workspace'
+  if (user.value?.role === 'TEACHER') return 'teacher-workspace'
+  if (canManagePersonnel.value) return 'personnel'
+  if (canViewBatches.value) return 'batches'
+  if (canManageAdminAuthorizations.value) return 'admin-accounts'
+  if (canUseAdminGovernance.value) return 'governance'
+  return 'workspace'
+})
 // 保留总管理员记录中的所属学院作为默认选项，其可操作范围由学院列表提供全系统选择。
 const adminManagerCollegeId = computed(() => user.value?.authorizations
   .find((authorization) => authorization.capabilityCode === 'ADMIN_ACCOUNT_MANAGER')?.collegeId ?? null)
@@ -81,13 +93,15 @@ const workspaceTitle = computed(() => ({
 
 const routeTitle = computed(() => {
   if (activeRoute.value === 'workspace') return user.value ? workspaceTitle.value : '账号登录'
-  if (activeRoute.value === 'home' && user.value) return workspaceTitle.value
+  if (activeRoute.value === 'home') return user.value ? workspaceTitle.value : '账号登录'
   return typeof route.meta.title === 'string' ? route.meta.title : '系统首页'
 })
 
 function routeIsAllowed(name: unknown): boolean {
   switch (name) {
-    case 'home': case 'workspace': case 'guide': return true
+    case 'home': return !user.value
+    case 'workspace': return !user.value || user.value.role === 'STUDENT' || (user.value.role === 'ADMIN' && !hasAdminEntry.value)
+    case 'guide': return true
     case 'personnel': return canManagePersonnel.value
     case 'admin-accounts': case 'authorizations': return canManageAdminAuthorizations.value
     case 'batches': return canViewBatches.value
@@ -98,8 +112,14 @@ function routeIsAllowed(name: unknown): boolean {
 }
 
 watch([() => route.name, loading, user], ([name, isLoading]) => {
-  if (isLoading || routeIsAllowed(name)) return
-  void router.replace({ name: user.value ? 'workspace' : 'home' })
+  if (isLoading) return
+  if (name === 'home' || name === 'workspace') {
+    const destination = user.value ? landingRoute.value : 'home'
+    if (name !== destination) void router.replace({ name: destination })
+    return
+  }
+  if (routeIsAllowed(name)) return
+  void router.replace({ name: user.value ? landingRoute.value : 'home' })
 }, { immediate: true })
 
 // 将后端稳定错误码转换成便于用户理解的提示，未知错误沿用服务端消息。
@@ -175,7 +195,7 @@ async function login(): Promise<void> {
     })
     user.value = session.user
     await loadAdminColleges(session.user)
-    await router.replace({ name: 'home' })
+    await router.replace({ name: landingRoute.value })
     // 密码只用于本次提交；认证后的页面不再保留明文密码。
     loginForm.password = ''
   } catch (error) {
@@ -254,7 +274,7 @@ onMounted(loadSession)
   <div class="portal-layout">
     <!-- 左侧菜单承载页面内导航；功能入口随登录身份变化，权限判定仍由服务端完成。 -->
     <aside class="sidebar" aria-label="系统侧边导航">
-      <RouterLink class="sidebar-brand" :to="{ name: 'home' }" aria-label="返回湖南科技大学师生互选系统首页">
+      <RouterLink class="sidebar-brand" :to="{ name: user ? landingRoute : 'home' }" :aria-label="user ? '返回当前工作台' : '返回登录页'">
         <span class="brand-monogram" aria-hidden="true">科</span>
         <span class="brand-copy">
           <strong>湖南科技大学</strong>
@@ -262,11 +282,19 @@ onMounted(loadSession)
         </span>
       </RouterLink>
 
-      <div class="sidebar-divider" aria-hidden="true"></div>
-      <nav class="side-navigation" aria-label="主要导航">
-        <span class="navigation-caption">服务导航</span>
-        <RouterLink class="side-link" :class="{ active: ['home', 'workspace', 'guide'].includes(activeRoute) }" :to="{ name: 'home' }" :aria-current="['home', 'workspace', 'guide'].includes(activeRoute) ? 'page' : undefined"><span class="side-link-mark" aria-hidden="true"></span>服务首页</RouterLink>
+      <div v-if="user" class="sidebar-account">
+        <div class="sidebar-user">
+          <span class="sidebar-avatar">{{ user.identity?.displayName?.slice(0, 1) ?? '管' }}</span>
+          <span class="sidebar-user-copy">
+            <strong>{{ user.identity?.displayName ?? user.loginIdentifier }}</strong>
+            <small>{{ roleLabel }}</small>
+          </span>
+        </div>
+        <button class="sidebar-logout" type="button" :disabled="submitting" @click="logout">退出登录</button>
+      </div>
 
+      <div v-if="hasAdminEntry || canManageTeacherScope" class="sidebar-divider" aria-hidden="true"></div>
+      <nav v-if="hasAdminEntry || canManageTeacherScope" class="side-navigation" aria-label="主要导航">
         <template v-if="canManagePersonnel">
           <span class="navigation-caption navigation-subheading">人员管理</span>
           <RouterLink class="side-link" :class="{ active: activeRoute === 'personnel' }" :to="{ name: 'personnel' }" :aria-current="activeRoute === 'personnel' ? 'page' : undefined"><span class="side-link-mark" aria-hidden="true"></span>人员与目录</RouterLink>
@@ -290,42 +318,15 @@ onMounted(loadSession)
         </template>
       </nav>
 
-      <div class="sidebar-bottom">
-        <div v-if="user" class="sidebar-user">
-          <span class="sidebar-avatar">{{ user.identity?.displayName?.slice(0, 1) ?? '管' }}</span>
-          <span class="sidebar-user-copy">
-            <strong>{{ user.identity?.displayName ?? user.loginIdentifier }}</strong>
-            <small>{{ roleLabel }}</small>
-          </span>
-        </div>
-        <p v-else class="sidebar-note">唯实惟新 · 至诚致志</p>
-        <button v-if="user" class="sidebar-logout" type="button" :disabled="submitting" @click="logout">退出登录</button>
-        <p v-else class="sidebar-security"><span class="secure-dot"></span>安全会话 · 校园服务</p>
-      </div>
     </aside>
 
     <div class="portal-main">
       <header class="portal-topline">
         <div class="breadcrumb"><span>湖南科技大学</span><i>/</i><span>师生互选系统</span></div>
-        <RouterLink v-if="!user && !loading" class="header-login-link" :to="{ name: 'workspace' }">进入系统 <span aria-hidden="true">→</span></RouterLink>
       </header>
 
-      <!-- 标题区说明系统用途；互选步骤与已确认的业务流程保持一致。 -->
-      <section v-if="!user && activeRoute === 'home'" id="page-home" class="portal-hero" aria-labelledby="page-title">
-        <p class="hero-eyebrow">研究生教育 · 师生互选服务</p>
-        <h1 id="page-title">师生互选系统</h1>
-        <p class="hero-description">学生按志愿选择导师，导师分轮处理申请，录取后关系即时锁定。</p>
-        <div class="hero-roles" aria-label="师生互选流程">
-          <span><b>1</b> 学生填报志愿</span>
-          <i aria-hidden="true"></i>
-          <span><b>2</b> 导师逐项处理</span>
-          <i aria-hidden="true"></i>
-          <span><b>3</b> 录取关系锁定</span>
-        </div>
-      </section>
-
-      <main class="content-area" :class="{ 'guest-content-area': !user && !loading && activeRoute === 'home', 'guide-content-area': activeRoute === 'guide' }">
-        <section v-if="activeRoute !== 'guide'" id="account-area" class="account-section" :aria-labelledby="user ? undefined : 'account-section-title'" :aria-label="user ? '用户工作区' : undefined">
+      <main class="content-area" :class="{ 'guide-content-area': activeRoute === 'guide' }">
+        <section v-if="activeRoute !== 'guide'" id="account-area" class="account-section" :aria-labelledby="!user ? 'account-section-title' : undefined" :aria-label="user ? '用户工作区' : undefined">
           <div v-if="!user" class="section-heading">
             <div>
               <p class="section-eyebrow">用户中心</p>
@@ -412,26 +413,27 @@ onMounted(loadSession)
           </div>
 
           <!-- 管理员入口由 Vue Router 切换工作窗口；当前只挂载所选模块。 -->
-          <section v-else-if="user" class="auth-card welcome-card" :aria-labelledby="activeRoute === 'workspace' || activeRoute === 'home' ? 'welcome-title' : undefined" :aria-label="activeRoute === 'workspace' || activeRoute === 'home' ? undefined : routeTitle">
-            <div v-if="activeRoute === 'workspace' || activeRoute === 'home'" class="welcome-topline">
-              <div class="account-actions">
-                <button class="text-button" type="button" :disabled="submitting" @click="passwordChangeOpen = !passwordChangeOpen">{{ passwordChangeOpen ? '收起密码设置' : '修改密码' }}</button>
-              </div>
+          <section v-else-if="user" class="auth-card welcome-card" :aria-labelledby="activeRoute === 'workspace' && !hasAdminEntry ? 'admin-access-title' : undefined" :aria-label="activeRoute === 'workspace' && !hasAdminEntry ? undefined : routeTitle">
+            <div class="admin-account-tools">
+              <button class="text-button" type="button" :disabled="submitting" @click="passwordChangeOpen = !passwordChangeOpen">{{ passwordChangeOpen ? '收起密码设置' : '修改密码' }}</button>
             </div>
-            <h2 v-if="activeRoute === 'workspace' || activeRoute === 'home'" id="welcome-title">{{ workspaceTitle }}</h2>
-            <div v-if="user.role === 'ADMIN' && (activeRoute === 'workspace' || activeRoute === 'home')" class="scope-section">
-              <div class="scope-heading">当前能力授权 <span>{{ isTotalAdmin ? '系统级' : user.authorizations.length }}</span></div>
-              <p v-if="isTotalAdmin" class="empty-scope">
-                自动拥有全部管理员业务能力和全系统学院/批次范围；仍须遵守业务状态与审计要求。
-              </p>
-              <div v-else-if="user.authorizations.length" class="scope-list">
-                <div v-for="(authorization, index) in user.authorizations" :key="`${authorization.capabilityCode}-${authorization.collegeId}-${authorization.batchId}-${index}`" class="scope-row">
-                  <span class="scope-code">{{ authorization.capabilityCode }}</span>
-                  <span>学院 {{ authorization.collegeId }}<template v-if="authorization.batchId"> · 批次 {{ authorization.batchId }}</template></span>
-                </div>
-              </div>
-              <p v-else class="empty-scope">此账号当前未配置业务授权范围。</p>
-            </div>
+            <form v-if="passwordChangeOpen" id="password-settings" class="form-stack change-password-form" @submit.prevent="changePassword">
+              <label for="current-password">当前密码</label>
+              <input id="current-password" v-model="passwordForm.currentCredential" type="password" autocomplete="current-password" required />
+              <label for="replacement-password">新密码</label>
+              <input id="replacement-password" v-model="passwordForm.newPassword" type="password" autocomplete="new-password" maxlength="128" required />
+              <label for="replacement-confirmation">确认新密码</label>
+              <input id="replacement-confirmation" v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" maxlength="128" required />
+              <p class="field-hint">新密码最多 72 个 UTF-8 字节，避免安全哈希截断。</p>
+              <p v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</p>
+              <button class="primary-button" type="submit" :disabled="submitting">{{ submitting ? '正在保存…' : '更新密码' }}<span aria-hidden="true">→</span></button>
+            </form>
+
+            <section v-if="activeRoute === 'workspace' && !hasAdminEntry" class="admin-access-empty" aria-labelledby="admin-access-title">
+              <h2 id="admin-access-title">暂无可用管理功能</h2>
+              <p>当前账号尚未开通管理入口，请联系总管理员。</p>
+            </section>
+
             <div v-if="canManageAdminAuthorizations && activeRoute === 'admin-accounts'" id="admin-account-management" class="management-area">
               <AdminAccountLifecyclePanel
                 :can-manage="canManageAdminAuthorizations"
@@ -461,27 +463,15 @@ onMounted(loadSession)
             <div v-if="canUseAdminGovernance && activeRoute === 'governance'" class="management-area">
               <AdminGovernancePanel :can-review-personnel="canManagePersonnel" :can-manage-batches="canManageBatches" />
             </div>
-            <form v-if="passwordChangeOpen && (activeRoute === 'workspace' || activeRoute === 'home')" id="password-settings" class="form-stack change-password-form" @submit.prevent="changePassword">
-              <div class="scope-heading">账号安全</div>
-              <label for="current-password">当前密码</label>
-              <input id="current-password" v-model="passwordForm.currentCredential" type="password" autocomplete="current-password" required />
-              <label for="replacement-password">新密码</label>
-              <input id="replacement-password" v-model="passwordForm.newPassword" type="password" autocomplete="new-password" maxlength="128" required />
-              <label for="replacement-confirmation">确认新密码</label>
-              <input id="replacement-confirmation" v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" maxlength="128" required />
-              <p class="field-hint">新密码最多 72 个 UTF-8 字节，避免安全哈希截断。</p>
-              <p v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</p>
-              <button class="primary-button" type="submit" :disabled="submitting">{{ submitting ? '正在保存…' : '更新密码' }}<span aria-hidden="true">→</span></button>
-            </form>
             <p v-if="errorMessage && !passwordChangeOpen" class="form-error" role="alert">{{ errorMessage }}</p>
           </section>
 
           <!-- 未登录时显示表单；表单只收集凭证，角色由服务端账号记录决定。 -->
           <ForgotPasswordPanel v-else-if="forgotPasswordOpen" @close="forgotPasswordOpen = false" />
           <section v-else class="auth-card login-card" aria-labelledby="login-title">
-            <div class="card-kicker">校园统一服务入口</div>
+            <div class="card-kicker">统一身份认证</div>
             <h2 id="login-title">欢迎登录</h2>
-            <p class="card-description">请输入管理员分配的登录标识和密码。</p>
+            <p class="card-description">请使用本人账号和密码登录。</p>
             <form class="form-stack" @submit.prevent="login">
               <label for="login-identifier">登录标识</label>
               <input id="login-identifier" v-model="loginForm.loginIdentifier" type="text" autocomplete="username" placeholder="学号、工号或管理员账号" maxlength="128" required />
@@ -489,7 +479,7 @@ onMounted(loadSession)
               <input id="login-password" v-model="loginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码" maxlength="128" required />
               <p v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</p>
               <button class="primary-button" type="submit" :disabled="submitting">
-                {{ submitting ? '正在验证…' : '登录系统' }}
+                {{ submitting ? '正在验证…' : '登录' }}
                 <span aria-hidden="true">→</span>
               </button>
             </form>

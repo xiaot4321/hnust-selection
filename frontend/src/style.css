@@ -138,6 +138,27 @@ a:focus-visible {
   background: var(--hnust-line);
 }
 
+.sidebar-account {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px 12px;
+}
+
+.sidebar-account .sidebar-user {
+  flex: 1 1 auto;
+}
+
+.sidebar-account .sidebar-logout {
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 8px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
 .side-navigation {
   display: flex;
   flex-direction: column;
@@ -154,6 +175,10 @@ a:focus-visible {
 
 .navigation-subheading {
   margin-top: 26px;
+}
+
+.side-navigation > .navigation-subheading:first-child {
+  margin-top: 0;
 }
 
 .side-link {
@@ -315,31 +340,6 @@ a:focus-visible {
   font-size: 11px;
 }
 
-.header-login-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
-  border: 1px solid #d0e0e5;
-  border-radius: 999px;
-  background: #eaf2f5;
-  color: var(--hnust-blue-dark);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
-  transition: background-color 140ms ease, border-color 140ms ease;
-}
-
-.header-login-link span {
-  margin-left: 0;
-}
-
-.header-login-link:hover {
-  border-color: #b4cbd4;
-  background: #e5eff2;
-  color: var(--hnust-blue-deep);
-}
-
 /* 标题和简介组成连续的门户横幅，不与登录表单并排分块。 */
 .portal-hero {
   position: relative;
@@ -353,18 +353,6 @@ a:focus-visible {
   background: #e9f6fb;
   border-bottom: 1px solid var(--hnust-line);
   scroll-margin-top: 22px;
-}
-
-.portal-hero::after {
-  position: absolute;
-  top: 18px;
-  right: 5%;
-  width: 168px;
-  height: 105px;
-  background: #d0ebf5;
-  clip-path: polygon(0 100%, 34% 25%, 53% 62%, 75% 0, 100% 100%);
-  content: "";
-  pointer-events: none;
 }
 
 .portal-hero > * {
@@ -409,55 +397,6 @@ a:focus-visible {
   font-weight: 750;
   letter-spacing: 0.02em;
   line-height: 1.35;
-}
-
-.hero-description {
-  margin: 0;
-  color: var(--hnust-muted);
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.hero-roles {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0;
-  margin-top: 11px;
-  color: var(--hnust-blue-deep);
-  font-size: 12px;
-}
-
-.hero-roles span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  white-space: nowrap;
-}
-
-.hero-roles span::before {
-  content: none;
-}
-
-.hero-roles span b {
-  display: grid;
-  width: 23px;
-  height: 23px;
-  place-items: center;
-  border: 1px solid #a5d4e7;
-  border-radius: 50%;
-  background: #fff;
-  color: var(--hnust-blue-dark);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.hero-roles i {
-  width: clamp(18px, 3vw, 42px);
-  height: 1px;
-  margin: 0 12px;
-  background: #9acde0;
 }
 
 .content-area {
@@ -1099,14 +1038,6 @@ a:focus-visible {
     padding: 22px 18px 18px;
   }
 
-  .portal-hero::after {
-    top: 18px;
-    right: 14px;
-    width: 84px;
-    height: 58px;
-    opacity: 0.7;
-  }
-
   .portal-hero h1 {
     margin-top: 13px;
   }
@@ -1128,15 +1059,6 @@ a:focus-visible {
   .login-card,
   .auth-card[aria-labelledby="password-title"] {
     padding: 22px 20px;
-  }
-
-  .hero-roles {
-    flex-wrap: wrap;
-    gap: 9px 13px;
-  }
-
-  .hero-roles i {
-    display: none;
   }
 
   .welcome-card {
@@ -1170,22 +1092,13 @@ a:focus-visible {
     font-size: 9px;
   }
 
-  .header-role,
-  .header-login-link {
+  .header-role {
     font-size: 10px;
     white-space: nowrap;
   }
 
   .portal-hero h1 {
     font-size: 31px;
-  }
-
-  .hero-roles span {
-    font-size: 10px;
-  }
-
-  .hero-description {
-    font-size: 12px;
   }
 
   .section-heading h2 {
@@ -1343,16 +1256,6 @@ a:focus-visible {
 .breadcrumb span:last-child { color: var(--hnust-blue-deep); font-weight: 650; }
 .header-role { color: var(--hnust-muted); font-size: 12px; }
 
-.header-login-link {
-  padding: 8px 14px;
-  border-color: #d0e0e5;
-  border-radius: 8px;
-  background: #eaf2f5;
-  color: var(--hnust-blue-dark);
-}
-
-.header-login-link:hover { border-color: #b4cbd4; background: #e5eff2; }
-
 .portal-hero {
   max-width: 1240px;
   margin-top: 22px;
@@ -1367,12 +1270,6 @@ a:focus-visible {
 .hero-eyebrow { border-color: #c7dce4; background: #e6f0f3; color: var(--hnust-blue-dark); }
 .hero-eyebrow::before { background: var(--hnust-blue); }
 .portal-hero h1 { color: var(--hnust-blue-deep); font-size: clamp(29px, 3vw, 36px); letter-spacing: 0; }
-.hero-description { color: var(--hnust-muted); font-size: 13px; }
-.hero-roles { margin-top: 19px; color: var(--hnust-blue-deep); }
-.hero-roles span { padding: 3px 0; }
-.hero-roles span b { border-color: #c6e0eb; background: #dff1f8; color: var(--hnust-blue-dark); }
-.hero-roles i { background: #a8cfdf; }
-
 .content-area { max-width: 1240px; }
 .guest-content-area { grid-template-columns: minmax(0, 1.15fr) minmax(285px, 0.85fr); gap: clamp(26px, 4vw, 54px); }
 .account-section { padding-top: 25px; }
@@ -1450,6 +1347,28 @@ a:focus-visible {
 
 .account-security-card .change-password-form {
   max-width: 560px;
+}
+
+.admin-account-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.admin-access-empty {
+  padding: 18px 0;
+}
+
+.admin-access-empty h2 {
+  margin: 0 0 7px;
+  color: var(--hnust-blue-deep);
+  font-size: 20px;
+}
+
+.admin-access-empty p {
+  margin: 0;
+  color: var(--hnust-muted);
+  font-size: 13px;
 }
 
 @media (max-width: 560px) {
@@ -1549,7 +1468,6 @@ a:focus-visible {
 @media (max-width: 480px) {
   .portal-main { padding: 0 14px; }
   .breadcrumb { gap: 6px; font-size: 10px; }
-  .header-login-link { padding: 7px 9px; font-size: 11px; }
   .portal-hero h1 { font-size: 27px; }
   .section-heading h2 { font-size: 19px; }
   .management-area { padding: 13px 12px 15px; }

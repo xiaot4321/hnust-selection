@@ -26,7 +26,7 @@ export interface TeacherProfile {
 }
 
 export interface TeacherApplication {
-  applicationId: number
+  applicationId: number | null
   batchId: number
   batchName: string
   roundNo: number
@@ -38,6 +38,7 @@ export interface TeacherApplication {
   biography: string | null
   resumeFileId: number | null
   status: string
+  canDecide: boolean
   enteredReviewAt: string | null
   processedAt: string | null
 }
