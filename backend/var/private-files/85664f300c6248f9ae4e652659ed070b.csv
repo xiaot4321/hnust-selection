@@ -1,0 +1,2 @@
+﻿loginIdentifier,studentNo,fullName,majorCode,degreeType,enrollmentYearCode,eligibilityStatus,evidenceType,evidenceReference
+TEST_STUDENT_20261024_001,TEST_STUDENT_20261024_001,名单导入测试学生01,1,ACADEMIC_MASTER,2026,ELIGIBLE,TEST_IMPORT,仅用于管理员名单导入功能验证
