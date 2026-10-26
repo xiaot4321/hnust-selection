@@ -100,17 +100,12 @@ a:focus-visible {
   text-decoration: none;
 }
 
-.brand-monogram {
-  display: grid;
-  width: 41px;
-  height: 41px;
+.brand-emblem {
+  display: block;
+  width: 44px;
+  height: 44px;
   flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid #b8deed;
-  background: #eef8fc;
-  color: var(--hnust-blue-dark);
-  font-size: 20px;
-  font-weight: 750;
+  object-fit: contain;
 }
 
 .brand-copy {
@@ -958,10 +953,9 @@ a:focus-visible {
     padding: 0 0 10px;
   }
 
-  .brand-monogram {
+  .brand-emblem {
     width: 35px;
     height: 35px;
-    font-size: 17px;
   }
 
   .brand-copy {
@@ -1160,15 +1154,7 @@ a:focus-visible {
   padding: 7px 4px 11px;
 }
 
-.brand-monogram {
-  width: 44px;
-  height: 44px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--hnust-blue);
-  color: #fff;
-  font-size: 19px;
-}
+
 
 .brand-copy strong { color: var(--hnust-blue-deep); font-size: 14px; letter-spacing: 0.02em; }
 .brand-copy small { color: var(--hnust-muted); font-size: 10px; }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import hnustEmblem from '../assets/hnust.png'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AdminAuthorizationPanel from '../components/admin/AdminAuthorizationPanel.vue'
@@ -275,7 +276,7 @@ onMounted(loadSession)
     <!-- 左侧菜单承载页面内导航；功能入口随登录身份变化，权限判定仍由服务端完成。 -->
     <aside class="sidebar" aria-label="系统侧边导航">
       <RouterLink class="sidebar-brand" :to="{ name: user ? landingRoute : 'home' }" :aria-label="user ? '返回当前工作台' : '返回登录页'">
-        <span class="brand-monogram" aria-hidden="true">科</span>
+        <img class="brand-emblem" :src="hnustEmblem" alt="湖南科技大学校徽" width="44" height="44" />
         <span class="brand-copy">
           <strong>湖南科技大学</strong>
           <small>研究生教育服务</small>
