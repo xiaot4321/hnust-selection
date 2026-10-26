@@ -5,7 +5,7 @@ import javax.validation.constraints.NotNull;
 import javax.validation.constraints.Positive;
 import javax.validation.constraints.Size;
 
-/** 新增共享学年目录；学院用于校验管理员权限，变更依据用于审计。 */
+/** 新增全局学年目录项；创建范围由当前管理员授权学院确定并写入审计。 */
 public class CreateAcademicYearRequest {
     @NotNull @Positive private Long collegeId;
     @NotBlank @Size(max = 16) private String yearCode;
